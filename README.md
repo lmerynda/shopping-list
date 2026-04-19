@@ -26,6 +26,17 @@ For frontend deployments, set:
 VITE_API_URL=https://your-backend.up.railway.app
 ```
 
+For Gmail SMTP invite delivery, set:
+
+```bash
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=your-app-account@gmail.com
+SMTP_PASS=<your-google-app-password>
+MAIL_FROM=Shopping List <your-app-account@gmail.com>
+```
+
 ## Test locally
 
 ```bash
@@ -44,6 +55,12 @@ Expected Railway variables:
 DATABASE_URL=<Railway Postgres connection string>
 CLIENT_ORIGIN=<your frontend origin>
 CLIENT_ORIGIN_REGEX=^https://shopping-list-.*\\.vercel\\.app$
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=<your gmail address>
+SMTP_PASS=<your google app password>
+MAIL_FROM=Shopping List <your-app-account@gmail.com>
 PORT=4000
 ```
 

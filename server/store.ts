@@ -347,6 +347,15 @@ export class AppStore {
     return result.rows[0]?.householdid ?? null;
   }
 
+  async getHousehold(userId: number, householdId: number) {
+    await this.ensureMembership(userId, householdId);
+    const result = await this.db.query<{ id: number; name: string }>(
+      "SELECT id, name FROM households WHERE id = $1",
+      [householdId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async getHouseholdState(userId: number, householdId: number): Promise<HouseholdState> {
     const membership = await this.ensureMembership(userId, householdId);
     const householdResult = await this.db.query<{ id: number; name: string }>(

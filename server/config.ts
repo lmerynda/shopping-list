@@ -27,10 +27,35 @@ function createAllowedOriginRegex() {
   return new RegExp(process.env.CLIENT_ORIGIN_REGEX);
 }
 
+function parseBoolean(value: string | undefined) {
+  return value === "true";
+}
+
+function resolveMailConfig() {
+  const host = process.env.SMTP_HOST;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.MAIL_FROM;
+
+  if (!host || !user || !pass || !from) {
+    return null;
+  }
+
+  return {
+    host,
+    port: Number(process.env.SMTP_PORT ?? 465),
+    secure: parseBoolean(process.env.SMTP_SECURE ?? "true"),
+    user,
+    pass,
+    from,
+  };
+}
+
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   port: Number(process.env.PORT ?? 4000),
   clientOrigin: process.env.CLIENT_ORIGIN ?? "http://127.0.0.1:4173",
   clientOriginRegex: createAllowedOriginRegex(),
   databaseUrl: resolveDatabaseUrl(),
+  mail: resolveMailConfig(),
 };

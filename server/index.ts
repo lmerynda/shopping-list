@@ -2,6 +2,7 @@ import express from "express";
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import { config } from "./config.js";
+import { isMailEnabled, sendInviteEmail } from "./mailer.js";
 import { AppStore } from "./store.js";
 import {
   acceptInviteSchema,
@@ -181,16 +182,40 @@ app.post("/api/households/:householdId/invites", requireUser, async (req, res) =
   }
   const userId = (req as express.Request & { userId: number }).userId;
   const householdId = Number(req.params.householdId);
+  let household: { id: number; name: string } | null = null;
+  let code: string;
   try {
-    const code = await store.createInvite(userId, householdId, parsed.data.email);
-    broadcastHousehold(householdId);
-    res.status(201).json({
-      ok: true,
-      devCode: process.env.NODE_ENV !== "production" ? code : undefined,
-    });
+    household = await store.getHousehold(userId, householdId);
+    if (!household) {
+      res.status(404).json({ error: "Household not found" });
+      return;
+    }
+    code = await store.createInvite(userId, householdId, parsed.data.email);
   } catch {
     res.status(403).json({ error: "Forbidden" });
+    return;
   }
+
+  let emailed = false;
+  try {
+    emailed = await sendInviteEmail({
+      email: parsed.data.email,
+      code,
+      householdName: household.name,
+    });
+  } catch (error) {
+    console.error("Failed to send invite email", error);
+    res.status(502).json({ error: "Invite created, but email delivery failed" });
+    return;
+  }
+
+  broadcastHousehold(householdId);
+  res.status(201).json({
+    ok: true,
+    emailed,
+    mailConfigured: isMailEnabled(),
+    devCode: process.env.NODE_ENV !== "production" ? code : undefined,
+  });
 });
 
 app.post("/api/invites/accept", requireUser, async (req, res) => {
