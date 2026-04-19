@@ -14,6 +14,7 @@
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json && mkdir -p dist-server/server && cp -R server/migrations dist-server/server/",
     "start": "node dist-server/index.js",
+    "start:server": "node dist-server/index.js",
     "test:unit": "vitest run",
     "test:e2e": "./scripts/run-e2e.sh"
   },

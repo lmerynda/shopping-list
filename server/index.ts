@@ -1,6 +1,7 @@
 import express from "express";
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
+import { config } from "./config.js";
 import { AppStore } from "./store.js";
 import {
   acceptInviteSchema,
@@ -16,13 +17,10 @@ const app = express();
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
-const port = Number(process.env.PORT ?? 4000);
-const connectionString = process.env.DATABASE_URL ?? "postgresql://shopping:shopping@127.0.0.1:54329/shopping_list";
-
 app.use(express.json());
 
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", process.env.CLIENT_ORIGIN ?? "http://127.0.0.1:4173");
+  res.setHeader("Access-Control-Allow-Origin", config.clientOrigin);
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
   if (req.method === "OPTIONS") {
@@ -232,12 +230,12 @@ app.patch("/api/items/:itemId", requireUser, async (req, res) => {
   }
 });
 
-const store = new AppStore({ connectionString });
+const store = new AppStore({ connectionString: config.databaseUrl });
 
 async function start() {
   await store.initialize();
-  httpServer.listen(port, "127.0.0.1", () => {
-    console.log(`server listening on ${port}`);
+  httpServer.listen(config.port, "0.0.0.0", () => {
+    console.log(`server listening on ${config.port}`);
   });
 }
 

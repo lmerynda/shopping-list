@@ -1,9 +1,8 @@
 import { Pool } from "pg";
+import { config } from "./config.js";
 import { runMigrations } from "./migrate.js";
 
-const connectionString = process.env.DATABASE_URL ?? "postgresql://shopping:shopping@127.0.0.1:54329/shopping_list";
-
-const pool = new Pool({ connectionString });
+const pool = new Pool({ connectionString: config.databaseUrl });
 
 try {
   await runMigrations(pool);
