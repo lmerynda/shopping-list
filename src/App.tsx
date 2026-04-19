@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { HouseholdState, SessionPayload } from "./lib/types";
 
-const API_URL = "http://127.0.0.1:4000";
+const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:4000";
+const WS_URL = API_URL.startsWith("https://")
+  ? API_URL.replace("https://", "wss://")
+  : API_URL.replace("http://", "ws://");
 const STORAGE_KEY = "shopping-list-session-token";
 const THEME_KEY = "shopping-list-theme";
 
@@ -91,7 +94,7 @@ export function App() {
       return;
     }
 
-    const socket = new WebSocket(`${API_URL.replace("http", "ws")}/ws?token=${token}&householdId=${selectedHouseholdId}`);
+    const socket = new WebSocket(`${WS_URL}/ws?token=${token}&householdId=${selectedHouseholdId}`);
     socket.addEventListener("message", () => {
       setRefreshTick((tick) => tick + 1);
     });

@@ -20,6 +20,12 @@ npm run dev
 
 Frontend runs on `http://127.0.0.1:4173`, the API on `http://127.0.0.1:4000`, and Postgres on `127.0.0.1:54329`.
 
+For frontend deployments, set:
+
+```bash
+VITE_API_URL=https://your-backend.up.railway.app
+```
+
 ## Test locally
 
 ```bash
