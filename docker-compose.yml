@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: shopping-list-postgres
+    environment:
+      POSTGRES_USER: shopping
+      POSTGRES_PASSWORD: shopping
+      POSTGRES_DB: shopping_list
+    ports:
+      - "54329:5432"
+    volumes:
+      - shopping-list-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shopping -d shopping_list"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  shopping-list-postgres-data:

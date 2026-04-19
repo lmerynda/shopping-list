@@ -8,7 +8,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "NODE_ENV=test PORT=4000 npm run dev:server",
+      command: "NODE_ENV=test PORT=4000 DATABASE_URL=postgresql://shopping:shopping@127.0.0.1:54329/shopping_list npm run dev:server",
       port: 4000,
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,

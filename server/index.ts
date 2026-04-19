@@ -17,8 +17,7 @@ const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
 const port = Number(process.env.PORT ?? 4000);
-const dbPath = process.env.DB_PATH ?? "./data/app.sqlite";
-const store = new AppStore(dbPath);
+const connectionString = process.env.DATABASE_URL ?? "postgresql://shopping:shopping@127.0.0.1:54329/shopping_list";
 
 app.use(express.json());
 
@@ -96,32 +95,35 @@ app.post("/api/test/reset", (_req, res) => {
     res.status(404).end();
     return;
   }
-  store.resetForTests();
-  res.status(204).end();
+  void store.resetForTests().then(() => {
+    res.status(204).end();
+  }).catch(() => {
+    res.status(500).json({ error: "Unable to reset test state" });
+  });
 });
 
-app.post("/api/auth/request-code", (req, res) => {
+app.post("/api/auth/request-code", async (req, res) => {
   const parsed = requestCodeSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
 
-  const code = store.requestMagicCode(parsed.data.email, parsed.data.displayName);
+  const code = await store.requestMagicCode(parsed.data.email, parsed.data.displayName);
   res.json({
     ok: true,
     devCode: process.env.NODE_ENV !== "production" ? code : undefined,
   });
 });
 
-app.post("/api/auth/verify", (req, res) => {
+app.post("/api/auth/verify", async (req, res) => {
   const parsed = verifyCodeSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
 
-  const session = store.verifyMagicCode(parsed.data.email, parsed.data.code);
+  const session = await store.verifyMagicCode(parsed.data.email, parsed.data.code);
   if (!session) {
     res.status(400).json({ error: "Invalid code" });
     return;
@@ -129,31 +131,31 @@ app.post("/api/auth/verify", (req, res) => {
   res.json(session);
 });
 
-app.get("/api/session", requireUser, (req, res) => {
+app.get("/api/session", requireUser, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
-  res.json(store.getSessionPayload(userId));
+  res.json(await store.getSessionPayload(userId));
 });
 
-app.post("/api/households", requireUser, (req, res) => {
+app.post("/api/households", requireUser, async (req, res) => {
   const parsed = createHouseholdSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   const userId = (req as express.Request & { userId: number }).userId;
-  res.status(201).json(store.createHousehold(userId, parsed.data.name));
+  res.status(201).json(await store.createHousehold(userId, parsed.data.name));
 });
 
-app.get("/api/households/:householdId", requireUser, (req, res) => {
+app.get("/api/households/:householdId", requireUser, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   try {
-    res.json(store.getHouseholdState(userId, Number(req.params.householdId)));
+    res.json(await store.getHouseholdState(userId, Number(req.params.householdId)));
   } catch {
     res.status(403).json({ error: "Forbidden" });
   }
 });
 
-app.post("/api/households/:householdId/invites", requireUser, (req, res) => {
+app.post("/api/households/:householdId/invites", requireUser, async (req, res) => {
   const parsed = inviteSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
@@ -162,7 +164,7 @@ app.post("/api/households/:householdId/invites", requireUser, (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   const householdId = Number(req.params.householdId);
   try {
-    const code = store.createInvite(userId, householdId, parsed.data.email);
+    const code = await store.createInvite(userId, householdId, parsed.data.email);
     broadcastHousehold(householdId);
     res.status(201).json({
       ok: true,
@@ -173,7 +175,7 @@ app.post("/api/households/:householdId/invites", requireUser, (req, res) => {
   }
 });
 
-app.post("/api/invites/accept", requireUser, (req, res) => {
+app.post("/api/invites/accept", requireUser, async (req, res) => {
   const parsed = acceptInviteSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
@@ -181,14 +183,14 @@ app.post("/api/invites/accept", requireUser, (req, res) => {
   }
   const userId = (req as express.Request & { userId: number }).userId;
   try {
-    const session = store.acceptInvite(userId, parsed.data.code);
+    const session = await store.acceptInvite(userId, parsed.data.code);
     res.json(session);
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Unable to accept invite" });
   }
 });
 
-app.post("/api/households/:householdId/items", requireUser, (req, res) => {
+app.post("/api/households/:householdId/items", requireUser, async (req, res) => {
   const parsed = addItemSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
@@ -197,7 +199,7 @@ app.post("/api/households/:householdId/items", requireUser, (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   const householdId = Number(req.params.householdId);
   try {
-    const itemId = store.addItem(userId, householdId, parsed.data.name, parsed.data.note);
+    const itemId = await store.addItem(userId, householdId, parsed.data.name, parsed.data.note);
     broadcastHousehold(householdId);
     res.status(201).json({ id: itemId });
   } catch {
@@ -205,7 +207,7 @@ app.post("/api/households/:householdId/items", requireUser, (req, res) => {
   }
 });
 
-app.patch("/api/items/:itemId", requireUser, (req, res) => {
+app.patch("/api/items/:itemId", requireUser, async (req, res) => {
   const parsed = updateItemSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
@@ -213,7 +215,7 @@ app.patch("/api/items/:itemId", requireUser, (req, res) => {
   }
   const userId = (req as express.Request & { userId: number }).userId;
   try {
-    store.updateItem(userId, Number(req.params.itemId), parsed.data);
+    await store.updateItem(userId, Number(req.params.itemId), parsed.data);
     res.status(204).end();
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Unable to update item" });
@@ -221,15 +223,25 @@ app.patch("/api/items/:itemId", requireUser, (req, res) => {
   }
 
   try {
-    const itemState = store.db
-      .prepare("SELECT household_id as householdId FROM items WHERE id = ?")
-      .get(Number(req.params.itemId)) as { householdId: number };
-    broadcastHousehold(itemState.householdId);
+    const householdId = await store.getItemHouseholdId(Number(req.params.itemId));
+    if (householdId) {
+      broadcastHousehold(householdId);
+    }
   } catch {
     // best effort
   }
 });
 
-httpServer.listen(port, "127.0.0.1", () => {
-  console.log(`server listening on ${port}`);
+const store = new AppStore({ connectionString });
+
+async function start() {
+  await store.initialize();
+  httpServer.listen(port, "127.0.0.1", () => {
+    console.log(`server listening on ${port}`);
+  });
+}
+
+void start().catch((error) => {
+  console.error(error);
+  process.exit(1);
 });

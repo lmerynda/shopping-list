@@ -1,62 +1,71 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { newDb } from "pg-mem";
 import { AppStore } from "../server/store";
 
 describe("AppStore", () => {
   let store: AppStore;
+  let pool: { end: () => Promise<void> };
 
-  beforeEach(() => {
-    store = new AppStore(":memory:");
+  beforeEach(async () => {
+    const db = newDb();
+    const adapter = db.adapters.createPg();
+    // pg-mem exposes a pg-compatible Pool constructor.
+    const PgMemPool = adapter.Pool;
+    pool = new PgMemPool();
+    store = new AppStore({ db: pool as never });
+    await store.initialize();
   });
 
-  afterEach(() => {
-    store.db.close();
+  afterEach(async () => {
+    await store.close();
+    await pool.end();
   });
 
-  test("creates households and grants membership", () => {
-    store.requestMagicCode("owner@example.com", "Owner");
-    const session = store.verifyMagicCode("owner@example.com", store.requestMagicCode("owner@example.com"))!;
-    const next = store.createHousehold(session.session.user.id, "Home");
+  test("creates households and grants membership", async () => {
+    const code = await store.requestMagicCode("owner@example.com", "Owner");
+    const session = await store.verifyMagicCode("owner@example.com", code);
+    const next = await store.createHousehold(session!.session.user.id, "Home");
 
     expect(next.households).toHaveLength(1);
     expect(next.households[0].name).toBe("Home");
   });
 
-  test("learns category corrections for future items", () => {
-    const firstCode = store.requestMagicCode("owner@example.com", "Owner");
-    const session = store.verifyMagicCode("owner@example.com", firstCode)!;
-    const household = store.createHousehold(session.session.user.id, "Home").households[0];
+  test("learns category corrections for future items", async () => {
+    const firstCode = await store.requestMagicCode("owner@example.com", "Owner");
+    const session = await store.verifyMagicCode("owner@example.com", firstCode);
+    const household = (await store.createHousehold(session!.session.user.id, "Home")).households[0];
 
-    const firstItemId = store.addItem(session.session.user.id, household.id, "Soap refill");
-    store.updateItem(session.session.user.id, firstItemId, { categoryKey: "pharmacy" });
-    const nextItemId = store.addItem(session.session.user.id, household.id, "Soap refill");
-    const state = store.getHouseholdState(session.session.user.id, household.id);
+    const firstItemId = await store.addItem(session!.session.user.id, household.id, "Soap refill");
+    await store.updateItem(session!.session.user.id, firstItemId, { categoryKey: "pharmacy" });
+    const nextItemId = await store.addItem(session!.session.user.id, household.id, "Soap refill");
+    const state = await store.getHouseholdState(session!.session.user.id, household.id);
     const nextItem = state.activeItems.find((item) => item.id === nextItemId);
 
     expect(nextItem?.categoryKey).toBe("pharmacy");
   });
 
-  test("requires invite email to match current user", () => {
-    const ownerCode = store.requestMagicCode("owner@example.com", "Owner");
-    const ownerSession = store.verifyMagicCode("owner@example.com", ownerCode)!;
-    const household = store.createHousehold(ownerSession.session.user.id, "Home").households[0];
-    const inviteCode = store.createInvite(ownerSession.session.user.id, household.id, "wife@example.com");
+  test("requires invite email to match current user", async () => {
+    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
+    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
+    const household = (await store.createHousehold(ownerSession!.session.user.id, "Home")).households[0];
+    const inviteCode = await store.createInvite(ownerSession!.session.user.id, household.id, "wife@example.com");
 
-    const otherCode = store.requestMagicCode("other@example.com", "Other");
-    const otherSession = store.verifyMagicCode("other@example.com", otherCode)!;
+    const otherCode = await store.requestMagicCode("other@example.com", "Other");
+    const otherSession = await store.verifyMagicCode("other@example.com", otherCode);
 
-    expect(() => store.acceptInvite(otherSession.session.user.id, inviteCode)).toThrow(/email does not match/i);
+    await expect(store.acceptInvite(otherSession!.session.user.id, inviteCode)).rejects.toThrow(/email does not match/i);
   });
 
-  test("keeps completed items completed when only category changes", () => {
-    const ownerCode = store.requestMagicCode("owner@example.com", "Owner");
-    const ownerSession = store.verifyMagicCode("owner@example.com", ownerCode)!;
-    const household = store.createHousehold(ownerSession.session.user.id, "Home").households[0];
-    const itemId = store.addItem(ownerSession.session.user.id, household.id, "Milk");
+  test("keeps completed items completed when only category changes", async () => {
+    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
+    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
+    const household = (await store.createHousehold(ownerSession!.session.user.id, "Home")).households[0];
+    const itemId = await store.addItem(ownerSession!.session.user.id, household.id, "Milk");
 
-    store.updateItem(ownerSession.session.user.id, itemId, { status: "completed" });
-    store.updateItem(ownerSession.session.user.id, itemId, { categoryKey: "pharmacy" });
+    await store.updateItem(ownerSession!.session.user.id, itemId, { status: "completed" });
+    await store.updateItem(ownerSession!.session.user.id, itemId, { categoryKey: "pharmacy" });
 
-    const state = store.getHouseholdState(ownerSession.session.user.id, household.id);
+    const state = await store.getHouseholdState(ownerSession!.session.user.id, household.id);
     expect(state.activeItems).toHaveLength(0);
     expect(state.completedItems[0]?.categoryKey).toBe("pharmacy");
   });

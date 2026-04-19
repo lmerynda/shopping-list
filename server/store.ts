@@ -1,13 +1,48 @@
-import Database from "better-sqlite3";
 import { randomBytes } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { Pool } from "pg";
 import { DEFAULT_CATEGORIES, inferDefaultCategory, normalizeItemName, sortCategories } from "../src/lib/categories.js";
 import type { HouseholdState, SessionPayload } from "../src/lib/types.js";
 
 type Session = {
   token: string;
   userId: number;
+};
+
+type Queryable = {
+  query<Result = unknown>(text: string, values?: unknown[]): Promise<{ rows: Result[]; rowCount: number | null }>;
+  end?: () => Promise<void>;
+};
+
+type UserRecord = {
+  id: number;
+  email: string;
+  displayname: string;
+};
+
+type MembershipRecord = {
+  role: "owner" | "member";
+};
+
+type HouseholdRecord = {
+  id: number;
+  name: string;
+  role: "owner" | "member";
+};
+
+type InviteRecord = {
+  id: number;
+  householdid: number;
+  email: string;
+  acceptedat: string | null;
+};
+
+type ItemRecord = {
+  id: number;
+  householdid: number;
+  name: string;
+  note: string | null;
+  status: "active" | "completed";
+  completedat: string | null;
 };
 
 function now(): string {
@@ -18,58 +53,84 @@ function createCode(length = 8): string {
   return randomBytes(length).toString("hex").slice(0, length).toUpperCase();
 }
 
+function toIsoString(value: string | Date | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+function mapUser(row: UserRecord): SessionPayload["user"] {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.displayname,
+  };
+}
+
 export class AppStore {
-  db: Database.Database;
+  private readonly db: Queryable;
+  private readonly ownsDb: boolean;
   sessions = new Map<string, Session>();
 
-  constructor(filename: string) {
-    mkdirSync(dirname(filename), { recursive: true });
-    this.db = new Database(filename);
-    this.db.pragma("journal_mode = WAL");
-    this.initialize();
+  constructor(options: { connectionString?: string; db?: Queryable }) {
+    if (options.db) {
+      this.db = options.db;
+      this.ownsDb = false;
+      return;
+    }
+
+    if (!options.connectionString) {
+      throw new Error("AppStore requires either a connection string or a queryable db");
+    }
+
+    this.db = new Pool({
+      connectionString: options.connectionString,
+    });
+    this.ownsDb = true;
   }
 
-  initialize() {
-    this.db.exec(`
+  async initialize() {
+    await this.db.query(`
       CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         email TEXT NOT NULL UNIQUE,
         display_name TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TIMESTAMPTZ NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS magic_codes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         email TEXT NOT NULL,
         code TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TIMESTAMPTZ NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS households (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TIMESTAMPTZ NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS household_memberships (
-        user_id INTEGER NOT NULL,
-        household_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
         role TEXT NOT NULL,
-        created_at TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
         PRIMARY KEY (user_id, household_id)
       );
 
       CREATE TABLE IF NOT EXISTS invites (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        household_id INTEGER NOT NULL,
+        id SERIAL PRIMARY KEY,
+        household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
         email TEXT NOT NULL,
         code TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL,
-        accepted_at TEXT
+        created_at TIMESTAMPTZ NOT NULL,
+        accepted_at TIMESTAMPTZ
       );
 
       CREATE TABLE IF NOT EXISTS household_categories (
-        household_id INTEGER NOT NULL,
+        household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
         category_key TEXT NOT NULL,
         label TEXT NOT NULL,
         sort_order INTEGER NOT NULL,
@@ -77,84 +138,86 @@ export class AppStore {
       );
 
       CREATE TABLE IF NOT EXISTS category_rules (
-        household_id INTEGER NOT NULL,
+        household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
         normalized_name TEXT NOT NULL,
         category_key TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
         PRIMARY KEY (household_id, normalized_name)
       );
 
       CREATE TABLE IF NOT EXISTS items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        household_id INTEGER NOT NULL,
+        id SERIAL PRIMARY KEY,
+        household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
         normalized_name TEXT NOT NULL,
         note TEXT,
         category_key TEXT NOT NULL,
         status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        completed_at TEXT
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        completed_at TIMESTAMPTZ
       );
     `);
   }
 
-  resetForTests() {
-    this.db.exec(`
-      DELETE FROM category_rules;
-      DELETE FROM household_categories;
-      DELETE FROM invites;
-      DELETE FROM household_memberships;
-      DELETE FROM items;
-      DELETE FROM households;
-      DELETE FROM magic_codes;
-      DELETE FROM users;
-    `);
+  async close() {
+    if (this.ownsDb && this.db.end) {
+      await this.db.end();
+    }
+  }
+
+  async resetForTests() {
+    await this.db.query(
+      "TRUNCATE TABLE category_rules, household_categories, invites, household_memberships, items, households, magic_codes, users RESTART IDENTITY CASCADE",
+    );
     this.sessions.clear();
   }
 
-  requestMagicCode(email: string, displayName?: string) {
-    const existingUser = this.db
-      .prepare("SELECT id FROM users WHERE email = ?")
-      .get(email) as { id: number } | undefined;
-    if (!existingUser && displayName) {
-      this.db
-        .prepare("INSERT INTO users (email, display_name, created_at) VALUES (?, ?, ?)")
-        .run(email, displayName.trim(), now());
+  async requestMagicCode(email: string, displayName?: string) {
+    const existingUser = await this.db.query<{ id: number }>("SELECT id FROM users WHERE email = $1", [email]);
+    if (existingUser.rows.length === 0 && displayName) {
+      await this.db.query("INSERT INTO users (email, display_name, created_at) VALUES ($1, $2, $3)", [
+        email,
+        displayName.trim(),
+        now(),
+      ]);
     }
 
     const code = createCode(6);
-    this.db.prepare("INSERT INTO magic_codes (email, code, created_at) VALUES (?, ?, ?)").run(email, code, now());
+    await this.db.query("INSERT INTO magic_codes (email, code, created_at) VALUES ($1, $2, $3)", [email, code, now()]);
     return code;
   }
 
-  verifyMagicCode(email: string, code: string): { token: string; session: SessionPayload } | null {
-    const latest = this.db
-      .prepare("SELECT code FROM magic_codes WHERE email = ? ORDER BY id DESC LIMIT 1")
-      .get(email) as { code: string } | undefined;
+  async verifyMagicCode(email: string, code: string): Promise<{ token: string; session: SessionPayload } | null> {
+    const latest = await this.db.query<{ code: string }>(
+      "SELECT code FROM magic_codes WHERE email = $1 ORDER BY id DESC LIMIT 1",
+      [email],
+    );
 
-    if (!latest || latest.code !== code) {
+    if (latest.rows[0]?.code !== code) {
       return null;
     }
 
-    let user = this.db
-      .prepare("SELECT id, email, display_name as displayName FROM users WHERE email = ?")
-      .get(email) as { id: number; email: string; displayName: string } | undefined;
+    let userResult = await this.db.query<UserRecord>(
+      "SELECT id, email, display_name AS displayName FROM users WHERE email = $1",
+      [email],
+    );
 
-    if (!user) {
+    if (userResult.rows.length === 0) {
       const name = email.split("@")[0];
-      const result = this.db
-        .prepare("INSERT INTO users (email, display_name, created_at) VALUES (?, ?, ?)")
-        .run(email, name, now());
-      user = { id: Number(result.lastInsertRowid), email, displayName: name };
+      userResult = await this.db.query<UserRecord>(
+        "INSERT INTO users (email, display_name, created_at) VALUES ($1, $2, $3) RETURNING id, email, display_name AS displayName",
+        [email, name, now()],
+      );
     }
 
+    const user = mapUser(userResult.rows[0]);
     const token = randomBytes(24).toString("hex");
     this.sessions.set(token, { token, userId: user.id });
 
     return {
       token,
-      session: this.getSessionPayload(user.id),
+      session: await this.getSessionPayload(user.id),
     };
   }
 
@@ -165,187 +228,254 @@ export class AppStore {
     return this.sessions.get(token)?.userId ?? null;
   }
 
-  getSessionPayload(userId: number): SessionPayload {
-    const user = this.db
-      .prepare("SELECT id, email, display_name as displayName FROM users WHERE id = ?")
-      .get(userId) as SessionPayload["user"];
-    const households = this.db
-      .prepare(
-        `
-          SELECT households.id, households.name, household_memberships.role
-          FROM households
-          JOIN household_memberships ON household_memberships.household_id = households.id
-          WHERE household_memberships.user_id = ?
-          ORDER BY households.name
-        `,
-      )
-      .all(userId) as SessionPayload["households"];
-    return { user, households };
+  async getSessionPayload(userId: number): Promise<SessionPayload> {
+    const userResult = await this.db.query<UserRecord>(
+      "SELECT id, email, display_name AS displayName FROM users WHERE id = $1",
+      [userId],
+    );
+    const householdsResult = await this.db.query<HouseholdRecord>(
+      `
+        SELECT households.id, households.name, household_memberships.role
+        FROM households
+        JOIN household_memberships ON household_memberships.household_id = households.id
+        WHERE household_memberships.user_id = $1
+        ORDER BY households.name
+      `,
+      [userId],
+    );
+
+    return {
+      user: mapUser(userResult.rows[0]),
+      households: householdsResult.rows.map((row) => ({ id: row.id, name: row.name, role: row.role })),
+    };
   }
 
-  createHousehold(userId: number, name: string) {
+  async createHousehold(userId: number, name: string) {
     const createdAt = now();
-    const result = this.db.prepare("INSERT INTO households (name, created_at) VALUES (?, ?)").run(name, createdAt);
-    const householdId = Number(result.lastInsertRowid);
-    this.db
-      .prepare(
-        "INSERT INTO household_memberships (user_id, household_id, role, created_at) VALUES (?, ?, 'owner', ?)",
-      )
-      .run(userId, householdId, createdAt);
+    const householdResult = await this.db.query<{ id: number }>(
+      "INSERT INTO households (name, created_at) VALUES ($1, $2) RETURNING id",
+      [name, createdAt],
+    );
+    const householdId = householdResult.rows[0].id;
+
+    await this.db.query(
+      "INSERT INTO household_memberships (user_id, household_id, role, created_at) VALUES ($1, $2, 'owner', $3)",
+      [userId, householdId, createdAt],
+    );
 
     for (const category of DEFAULT_CATEGORIES) {
-      this.db
-        .prepare(
-          "INSERT INTO household_categories (household_id, category_key, label, sort_order) VALUES (?, ?, ?, ?)",
-        )
-        .run(householdId, category.key, category.label, category.sortOrder);
+      await this.db.query(
+        "INSERT INTO household_categories (household_id, category_key, label, sort_order) VALUES ($1, $2, $3, $4)",
+        [householdId, category.key, category.label, category.sortOrder],
+      );
     }
 
     return this.getSessionPayload(userId);
   }
 
-  ensureMembership(userId: number, householdId: number) {
-    const membership = this.db
-      .prepare("SELECT role FROM household_memberships WHERE user_id = ? AND household_id = ?")
-      .get(userId, householdId) as { role: "owner" | "member" } | undefined;
+  async ensureMembership(userId: number, householdId: number) {
+    const membership = await this.db.query<MembershipRecord>(
+      "SELECT role FROM household_memberships WHERE user_id = $1 AND household_id = $2",
+      [userId, householdId],
+    );
 
-    if (!membership) {
+    if (membership.rows.length === 0) {
       throw new Error("Forbidden");
     }
 
-    return membership;
+    return membership.rows[0];
   }
 
-  createInvite(userId: number, householdId: number, email: string) {
-    this.ensureMembership(userId, householdId);
+  async createInvite(userId: number, householdId: number, email: string) {
+    await this.ensureMembership(userId, householdId);
     const code = createCode(10);
-    this.db
-      .prepare("INSERT INTO invites (household_id, email, code, created_at) VALUES (?, ?, ?, ?)")
-      .run(householdId, email, code, now());
+    await this.db.query(
+      "INSERT INTO invites (household_id, email, code, created_at) VALUES ($1, $2, $3, $4)",
+      [householdId, email, code, now()],
+    );
     return code;
   }
 
-  acceptInvite(userId: number, code: string) {
-    const invite = this.db
-      .prepare("SELECT id, household_id as householdId, email, accepted_at as acceptedAt FROM invites WHERE code = ?")
-      .get(code) as { id: number; householdId: number; email: string; acceptedAt: string | null } | undefined;
-    if (!invite || invite.acceptedAt) {
+  async acceptInvite(userId: number, code: string) {
+    const inviteResult = await this.db.query<InviteRecord>(
+      "SELECT id, household_id AS householdId, email, accepted_at AS acceptedAt FROM invites WHERE code = $1",
+      [code],
+    );
+    const invite = inviteResult.rows[0];
+    if (!invite || invite.acceptedat) {
       throw new Error("Invite not found");
     }
 
-    const user = this.db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as { email: string };
-    if (user.email !== invite.email) {
+    const userResult = await this.db.query<{ email: string }>("SELECT email FROM users WHERE id = $1", [userId]);
+    if (userResult.rows[0]?.email !== invite.email) {
       throw new Error("Invite email does not match the current account");
     }
 
     const createdAt = now();
-    this.db
-      .prepare(
-        "INSERT OR IGNORE INTO household_memberships (user_id, household_id, role, created_at) VALUES (?, ?, 'member', ?)",
-      )
-      .run(userId, invite.householdId, createdAt);
-    this.db.prepare("UPDATE invites SET accepted_at = ? WHERE id = ?").run(createdAt, invite.id);
+    await this.db.query(
+      `
+        INSERT INTO household_memberships (user_id, household_id, role, created_at)
+        VALUES ($1, $2, 'member', $3)
+        ON CONFLICT (user_id, household_id) DO NOTHING
+      `,
+      [userId, invite.householdid, createdAt],
+    );
+    await this.db.query("UPDATE invites SET accepted_at = $1 WHERE id = $2", [createdAt, invite.id]);
 
     return this.getSessionPayload(userId);
   }
 
-  resolveCategory(householdId: number, name: string) {
+  async resolveCategory(householdId: number, name: string) {
     const normalized = normalizeItemName(name);
-    const learned = this.db
-      .prepare("SELECT category_key as categoryKey FROM category_rules WHERE household_id = ? AND normalized_name = ?")
-      .get(householdId, normalized) as { categoryKey: string } | undefined;
-    return learned?.categoryKey ?? inferDefaultCategory(name);
+    const learned = await this.db.query<{ categorykey: string }>(
+      "SELECT category_key AS categoryKey FROM category_rules WHERE household_id = $1 AND normalized_name = $2",
+      [householdId, normalized],
+    );
+    return learned.rows[0]?.categorykey ?? inferDefaultCategory(name);
   }
 
-  addItem(userId: number, householdId: number, name: string, note?: string) {
-    this.ensureMembership(userId, householdId);
+  async addItem(userId: number, householdId: number, name: string, note?: string) {
+    await this.ensureMembership(userId, householdId);
     const timestamp = now();
     const normalized = normalizeItemName(name);
-    const categoryKey = this.resolveCategory(householdId, name);
-    const result = this.db
-      .prepare(
-        `
-          INSERT INTO items (household_id, name, normalized_name, note, category_key, status, created_at, updated_at, completed_at)
-          VALUES (?, ?, ?, ?, ?, 'active', ?, ?, NULL)
-        `,
-      )
-      .run(householdId, name.trim(), normalized, note?.trim() || null, categoryKey, timestamp, timestamp);
-    return Number(result.lastInsertRowid);
+    const categoryKey = await this.resolveCategory(householdId, name);
+    const result = await this.db.query<{ id: number }>(
+      `
+        INSERT INTO items (household_id, name, normalized_name, note, category_key, status, created_at, updated_at, completed_at)
+        VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, NULL)
+        RETURNING id
+      `,
+      [householdId, name.trim(), normalized, note?.trim() || null, categoryKey, timestamp, timestamp],
+    );
+    return result.rows[0].id;
   }
 
-  updateItem(userId: number, itemId: number, patch: { name?: string; note?: string | null; categoryKey?: string; status?: "active" | "completed" }) {
-    const item = this.db
-      .prepare("SELECT id, household_id as householdId, name, note, status, completed_at as completedAt FROM items WHERE id = ?")
-      .get(itemId) as
-      | { id: number; householdId: number; name: string; note: string | null; status: "active" | "completed"; completedAt: string | null }
-      | undefined;
+  async updateItem(
+    userId: number,
+    itemId: number,
+    patch: { name?: string; note?: string | null; categoryKey?: string; status?: "active" | "completed" },
+  ) {
+    const itemResult = await this.db.query<ItemRecord>(
+      "SELECT id, household_id AS householdId, name, note, status, completed_at AS completedAt FROM items WHERE id = $1",
+      [itemId],
+    );
+    const item = itemResult.rows[0];
     if (!item) {
       throw new Error("Item not found");
     }
-    this.ensureMembership(userId, item.householdId);
+    await this.ensureMembership(userId, item.householdid);
 
     const nextName = patch.name?.trim() || item.name;
     const nextNormalized = normalizeItemName(nextName);
-    const nextCategory = patch.categoryKey ?? this.resolveCategory(item.householdId, nextName);
+    const nextCategory = patch.categoryKey ?? (await this.resolveCategory(item.householdid, nextName));
     const nextStatus = patch.status ?? item.status;
-    const completedAt = nextStatus === "completed" ? item.completedAt ?? now() : null;
+    const completedAt = nextStatus === "completed" ? item.completedat ?? now() : null;
     const note = patch.note === undefined ? item.note : patch.note?.trim() || null;
 
-    this.db
-      .prepare(
-        `
-          UPDATE items
-          SET name = ?,
-              normalized_name = ?,
-              note = ?,
-              category_key = ?,
-              status = ?,
-              updated_at = ?,
-              completed_at = ?
-          WHERE id = ?
-        `,
-      )
-      .run(nextName, nextNormalized, note, nextCategory, nextStatus, now(), completedAt, itemId);
+    await this.db.query(
+      `
+        UPDATE items
+        SET name = $1,
+            normalized_name = $2,
+            note = $3,
+            category_key = $4,
+            status = $5,
+            updated_at = $6,
+            completed_at = $7
+        WHERE id = $8
+      `,
+      [nextName, nextNormalized, note, nextCategory, nextStatus, now(), completedAt, itemId],
+    );
 
     if (patch.categoryKey) {
-      this.db
-        .prepare(
-          "INSERT INTO category_rules (household_id, normalized_name, category_key, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(household_id, normalized_name) DO UPDATE SET category_key = excluded.category_key, updated_at = excluded.updated_at",
-        )
-        .run(item.householdId, nextNormalized, patch.categoryKey, now());
+      await this.db.query(
+        `
+          INSERT INTO category_rules (household_id, normalized_name, category_key, updated_at)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (household_id, normalized_name)
+          DO UPDATE SET category_key = EXCLUDED.category_key, updated_at = EXCLUDED.updated_at
+        `,
+        [item.householdid, nextNormalized, patch.categoryKey, now()],
+      );
     }
   }
 
-  getHouseholdState(userId: number, householdId: number): HouseholdState {
-    const membership = this.ensureMembership(userId, householdId);
-    const household = this.db
-      .prepare("SELECT id, name FROM households WHERE id = ?")
-      .get(householdId) as { id: number; name: string };
-    const categories = this.db
-      .prepare(
-        "SELECT category_key as key, label, sort_order as sortOrder FROM household_categories WHERE household_id = ? ORDER BY sort_order",
-      )
-      .all(householdId) as HouseholdState["categories"];
-    const categoryMap = new Map(categories.map((category) => [category.key, category.sortOrder]));
-    const rows = this.db
-      .prepare(
-        `
-          SELECT items.id, items.household_id as householdId, items.name, items.normalized_name as normalizedName,
-                 items.note, items.category_key as categoryKey, household_categories.label as categoryLabel,
-                 items.status, items.created_at as createdAt, items.updated_at as updatedAt, items.completed_at as completedAt
-          FROM items
-          JOIN household_categories
-            ON household_categories.household_id = items.household_id
-           AND household_categories.category_key = items.category_key
-          WHERE items.household_id = ?
-        `,
-      )
-      .all(householdId) as HouseholdState["activeItems"];
-    const invites = this.db
-      .prepare(
-        "SELECT id, email, code, created_at as createdAt, accepted_at as acceptedAt FROM invites WHERE household_id = ? ORDER BY created_at DESC",
-      )
-      .all(householdId) as HouseholdState["invites"];
+  async getItemHouseholdId(itemId: number) {
+    const result = await this.db.query<{ householdid: number }>(
+      "SELECT household_id AS householdId FROM items WHERE id = $1",
+      [itemId],
+    );
+    return result.rows[0]?.householdid ?? null;
+  }
+
+  async getHouseholdState(userId: number, householdId: number): Promise<HouseholdState> {
+    const membership = await this.ensureMembership(userId, householdId);
+    const householdResult = await this.db.query<{ id: number; name: string }>(
+      "SELECT id, name FROM households WHERE id = $1",
+      [householdId],
+    );
+    const categoriesResult = await this.db.query<{ key: string; label: string; sortorder: number }>(
+      "SELECT category_key AS key, label, sort_order AS sortOrder FROM household_categories WHERE household_id = $1 ORDER BY sort_order",
+      [householdId],
+    );
+    const categoryMap = new Map(categoriesResult.rows.map((category) => [category.key, category.sortorder]));
+    const rowsResult = await this.db.query<{
+      id: number;
+      householdid: number;
+      name: string;
+      normalizedname: string;
+      note: string | null;
+      categorykey: string;
+      categorylabel: string;
+      status: "active" | "completed";
+      createdat: string;
+      updatedat: string;
+      completedat: string | null;
+    }>(
+      `
+        SELECT items.id,
+               items.household_id AS householdId,
+               items.name,
+               items.normalized_name AS normalizedName,
+               items.note,
+               items.category_key AS categoryKey,
+               household_categories.label AS categoryLabel,
+               items.status,
+               items.created_at AS createdAt,
+               items.updated_at AS updatedAt,
+               items.completed_at AS completedAt
+        FROM items
+        JOIN household_categories
+          ON household_categories.household_id = items.household_id
+         AND household_categories.category_key = items.category_key
+        WHERE items.household_id = $1
+      `,
+      [householdId],
+    );
+    const invitesResult = await this.db.query<{
+      id: number;
+      email: string;
+      code: string;
+      createdat: string;
+      acceptedat: string | null;
+    }>(
+      "SELECT id, email, code, created_at AS createdAt, accepted_at AS acceptedAt FROM invites WHERE household_id = $1 ORDER BY created_at DESC",
+      [householdId],
+    );
+
+    const rows = rowsResult.rows.map((item) => ({
+      id: item.id,
+      householdId: item.householdid,
+      name: item.name,
+      normalizedName: item.normalizedname,
+      note: item.note,
+      categoryKey: item.categorykey,
+      categoryLabel: item.categorylabel,
+      status: item.status,
+      createdAt: toIsoString(item.createdat)!,
+      updatedAt: toIsoString(item.updatedat)!,
+      completedAt: toIsoString(item.completedat),
+    }));
 
     const activeItems = sortCategories(
       rows.filter((item) => item.status === "active"),
@@ -357,11 +487,21 @@ export class AppStore {
     );
 
     return {
-      household: { ...household, role: membership.role },
-      categories,
+      household: { ...householdResult.rows[0], role: membership.role },
+      categories: categoriesResult.rows.map((category) => ({
+        key: category.key,
+        label: category.label,
+        sortOrder: category.sortorder,
+      })),
       activeItems,
       completedItems,
-      invites,
+      invites: invitesResult.rows.map((invite) => ({
+        id: invite.id,
+        email: invite.email,
+        code: invite.code,
+        createdAt: invite.createdat,
+        acceptedAt: invite.acceptedat,
+      })),
     };
   }
 }
