@@ -14,6 +14,7 @@ Shared household shopping list app with:
 ```bash
 npm install
 npm run db:up
+npm run migrate
 npm run dev
 ```
 
