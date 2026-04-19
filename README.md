@@ -43,6 +43,7 @@ Expected Railway variables:
 ```bash
 DATABASE_URL=<Railway Postgres connection string>
 CLIENT_ORIGIN=<your frontend origin>
+CLIENT_ORIGIN_REGEX=^https://shopping-list-.*\\.vercel\\.app$
 PORT=4000
 ```
 

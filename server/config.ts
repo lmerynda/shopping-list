@@ -19,9 +19,18 @@ function resolveDatabaseUrl() {
   return requireEnv("DATABASE_URL", process.env.DATABASE_URL);
 }
 
+function createAllowedOriginRegex() {
+  if (!process.env.CLIENT_ORIGIN_REGEX) {
+    return null;
+  }
+
+  return new RegExp(process.env.CLIENT_ORIGIN_REGEX);
+}
+
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   port: Number(process.env.PORT ?? 4000),
   clientOrigin: process.env.CLIENT_ORIGIN ?? "http://127.0.0.1:4173",
+  clientOriginRegex: createAllowedOriginRegex(),
   databaseUrl: resolveDatabaseUrl(),
 };

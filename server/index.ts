@@ -20,11 +20,31 @@ const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 app.use(express.json());
 
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", config.clientOrigin);
+  const requestOrigin = req.header("origin");
+  const isAllowedOrigin =
+    !requestOrigin ||
+    requestOrigin === config.clientOrigin ||
+    (config.clientOriginRegex ? config.clientOriginRegex.test(requestOrigin) : false);
+
+  if (isAllowedOrigin && requestOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+    res.setHeader("Vary", "Origin");
+  } else if (!requestOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", config.clientOrigin);
+  }
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
   if (req.method === "OPTIONS") {
+    if (!isAllowedOrigin) {
+      res.status(403).end();
+      return;
+    }
     res.status(204).end();
+    return;
+  }
+
+  if (!isAllowedOrigin) {
+    res.status(403).json({ error: "Origin not allowed" });
     return;
   }
   next();
