@@ -54,5 +54,5 @@ test("shared household flow works end to end", async ({ browser }) => {
   await owner.locator(".panel").nth(1).getByRole("combobox").selectOption("pharmacy");
   await owner.getByPlaceholder("Milk").fill("Milk");
   await owner.getByRole("button", { name: "Add" }).click();
-  await expect(owner.locator(".panel").nth(1).locator(".item-row p").filter({ hasText: "Pharmacy" })).toBeVisible();
+  await expect(owner.locator(".panel").nth(1).locator(".category-pill").filter({ hasText: "Pharmacy" })).toBeVisible();
 });
