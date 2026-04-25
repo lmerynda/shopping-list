@@ -27,9 +27,25 @@ function createAllowedOriginRegex() {
   return new RegExp(process.env.CLIENT_ORIGIN_REGEX);
 }
 
+function normalizeEnvValue(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
 function resolveMailConfig() {
-  const resendApiKey = process.env.RESEND_API_KEY;
-  const from = process.env.MAIL_FROM;
+  const resendApiKey = normalizeEnvValue(process.env.RESEND_API_KEY);
+  const from = normalizeEnvValue(process.env.MAIL_FROM);
 
   if (resendApiKey && from) {
     return {
