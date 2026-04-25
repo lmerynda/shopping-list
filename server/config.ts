@@ -27,28 +27,17 @@ function createAllowedOriginRegex() {
   return new RegExp(process.env.CLIENT_ORIGIN_REGEX);
 }
 
-function parseBoolean(value: string | undefined) {
-  return value === "true";
-}
-
 function resolveMailConfig() {
-  const host = process.env.SMTP_HOST;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  const resendApiKey = process.env.RESEND_API_KEY;
   const from = process.env.MAIL_FROM;
 
-  if (!host || !user || !pass || !from) {
-    return null;
+  if (resendApiKey && from) {
+    return {
+      apiKey: resendApiKey,
+      from,
+    };
   }
-
-  return {
-    host,
-    port: Number(process.env.SMTP_PORT ?? 465),
-    secure: parseBoolean(process.env.SMTP_SECURE ?? "true"),
-    user,
-    pass,
-    from,
-  };
+  return null;
 }
 
 export const config = {

@@ -2,7 +2,7 @@ import express from "express";
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import { config } from "./config.js";
-import { isMailEnabled, sendInviteEmail } from "./mailer.js";
+import { isMailEnabled, sendInviteEmail, sendLoginCodeEmail } from "./mailer.js";
 import { AppStore } from "./store.js";
 import {
   acceptInviteSchema,
@@ -129,8 +129,27 @@ app.post("/api/auth/request-code", async (req, res) => {
   }
 
   const code = await store.requestMagicCode(parsed.data.email, parsed.data.displayName);
+  let emailed = false;
+  try {
+    emailed = await sendLoginCodeEmail({
+      email: parsed.data.email,
+      code,
+    });
+  } catch (error) {
+    console.error("Failed to send login code email", error);
+    res.status(502).json({ error: "Code created, but email delivery failed" });
+    return;
+  }
+
+  if (!emailed && process.env.NODE_ENV === "production") {
+    res.status(503).json({ error: "Email delivery is not configured" });
+    return;
+  }
+
   res.json({
     ok: true,
+    emailed,
+    mailConfigured: isMailEnabled(),
     devCode: process.env.NODE_ENV !== "production" ? code : undefined,
   });
 });
