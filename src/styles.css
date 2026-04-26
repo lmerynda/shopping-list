@@ -496,6 +496,21 @@ h3 {
   margin-top: 1rem;
 }
 
+.danger-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.danger-button {
+  background: var(--danger);
+  color: #fff;
+}
+
 .item-row,
 .invite-row {
   padding: 0.95rem 0;
@@ -582,6 +597,7 @@ h3 {
   .panel-header,
   .detail-header,
   .settings-row,
+  .danger-row,
   .toolbar-row,
   .item-row,
   .item-actions,

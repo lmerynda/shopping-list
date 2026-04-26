@@ -30,6 +30,38 @@ describe("AppStore", () => {
     expect(next.households[0].name).toBe("Home");
   });
 
+  test("creates a default list and returns list summaries", async () => {
+    const code = await store.requestMagicCode("owner@example.com", "Owner");
+    const session = await store.verifyMagicCode("owner@example.com", code);
+    const household = (await store.createHousehold(session!.session.user.id, "Home")).households[0];
+    const summaries = await store.getListSummaries(session!.session.user.id);
+
+    expect(summaries).toMatchObject([
+      {
+        householdId: household.id,
+        householdName: "Home",
+        name: "Groceries",
+        activeCount: 0,
+        completedCount: 0,
+      },
+    ]);
+  });
+
+  test("adds items to a specific list", async () => {
+    const code = await store.requestMagicCode("owner@example.com", "Owner");
+    const session = await store.verifyMagicCode("owner@example.com", code);
+    await store.createHousehold(session!.session.user.id, "Home");
+    const groceries = (await store.getListSummaries(session!.session.user.id))[0];
+    const hardwareId = await store.createList(session!.session.user.id, groceries.householdId, "Hardware");
+
+    await store.addListItem(session!.session.user.id, hardwareId, "Trash bags");
+
+    const groceriesState = await store.getListState(session!.session.user.id, groceries.id);
+    const hardwareState = await store.getListState(session!.session.user.id, hardwareId);
+    expect(groceriesState.activeItems).toHaveLength(0);
+    expect(hardwareState.activeItems[0]?.name).toBe("Trash bags");
+  });
+
   test("learns category corrections for future items", async () => {
     const firstCode = await store.requestMagicCode("owner@example.com", "Owner");
     const session = await store.verifyMagicCode("owner@example.com", firstCode);
@@ -54,6 +86,21 @@ describe("AppStore", () => {
     const otherSession = await store.verifyMagicCode("other@example.com", otherCode);
 
     await expect(store.acceptInvite(otherSession!.session.user.id, inviteCode)).rejects.toThrow(/email does not match/i);
+  });
+
+  test("lets a member leave a household", async () => {
+    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
+    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
+    const household = (await store.createHousehold(ownerSession!.session.user.id, "Home")).households[0];
+    const inviteCode = await store.createInvite(ownerSession!.session.user.id, household.id, "wife@example.com");
+
+    const memberCode = await store.requestMagicCode("wife@example.com", "Wife");
+    const memberSession = await store.verifyMagicCode("wife@example.com", memberCode);
+    await store.acceptInvite(memberSession!.session.user.id, inviteCode);
+
+    const afterLeave = await store.leaveHousehold(memberSession!.session.user.id, household.id);
+
+    expect(afterLeave.households).toHaveLength(0);
   });
 
   test("removes pending invites", async () => {

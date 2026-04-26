@@ -319,6 +319,18 @@ app.delete("/api/invites/:inviteId", requireUser, async (req, res) => {
   }
 });
 
+app.delete("/api/households/:householdId/members/me", requireUser, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  const householdId = Number(req.params.householdId);
+  try {
+    const session = await store.leaveHousehold(userId, householdId);
+    broadcastHousehold(householdId);
+    res.json(session);
+  } catch {
+    res.status(403).json({ error: "Forbidden" });
+  }
+});
+
 app.post("/api/households/:householdId/items", requireUser, async (req, res) => {
   const parsed = addItemSchema.safeParse(req.body);
   if (!parsed.success) {

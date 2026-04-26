@@ -415,13 +415,13 @@ export class AppStore {
   }
 
   async ensureListAccess(userId: number, listId: number) {
-    const result = await this.db.query<{ id: number; householdid: number; householdname: string; name: string; createdat: string }>(
+    const result = await this.db.query<{ id: number; household_id: number; household_name: string; list_name: string; created_at: string }>(
       `
         SELECT shopping_lists.id,
-               shopping_lists.household_id AS householdId,
-               households.name AS householdName,
-               shopping_lists.name,
-               shopping_lists.created_at AS createdAt
+               shopping_lists.household_id AS household_id,
+               households.name AS household_name,
+               shopping_lists.name AS list_name,
+               shopping_lists.created_at AS created_at
         FROM shopping_lists
         JOIN households ON households.id = shopping_lists.household_id
         JOIN household_memberships ON household_memberships.household_id = households.id
@@ -436,10 +436,10 @@ export class AppStore {
     }
     return {
       id: list.id,
-      householdId: list.householdid,
-      householdName: list.householdname,
-      name: list.name,
-      createdAt: toIsoString(list.createdat)!,
+      householdId: list.household_id,
+      householdName: list.household_name,
+      name: list.list_name,
+      createdAt: toIsoString(list.created_at)!,
     };
   }
 
@@ -461,42 +461,50 @@ export class AppStore {
   }
 
   async getListSummaries(userId: number): Promise<ShoppingListSummary[]> {
+    const householdsResult = await this.db.query<{ id: number; name: string }>(
+      `
+        SELECT households.id, households.name
+        FROM households
+        JOIN household_memberships ON household_memberships.household_id = households.id
+        WHERE household_memberships.user_id = $1
+      `,
+      [userId],
+    );
+    const householdNames = new Map(householdsResult.rows.map((household) => [household.id, household.name]));
     const result = await this.db.query<{
       id: number;
-      householdid: number;
-      householdname: string;
-      name: string;
-      createdat: string;
-      activecount: string | number;
-      completedcount: string | number;
+      household_id: number;
+      list_name: string;
+      created_at: string;
+      active_count: string | number;
+      completed_count: string | number;
     }>(
       `
         SELECT shopping_lists.id,
-               shopping_lists.household_id AS householdId,
-               households.name AS householdName,
-               shopping_lists.name,
-               shopping_lists.created_at AS createdAt,
-               COUNT(items.id) FILTER (WHERE items.status = 'active') AS activeCount,
-               COUNT(items.id) FILTER (WHERE items.status = 'completed') AS completedCount
+               shopping_lists.household_id AS household_id,
+               shopping_lists.name AS list_name,
+               shopping_lists.created_at AS created_at,
+               COUNT(items.id) FILTER (WHERE items.status = 'active') AS active_count,
+               COUNT(items.id) FILTER (WHERE items.status = 'completed') AS completed_count
         FROM shopping_lists
         JOIN households ON households.id = shopping_lists.household_id
         JOIN household_memberships ON household_memberships.household_id = households.id
         LEFT JOIN items ON items.list_id = shopping_lists.id
         WHERE household_memberships.user_id = $1
-        GROUP BY shopping_lists.id, shopping_lists.household_id, households.name, shopping_lists.name, shopping_lists.created_at
-        ORDER BY households.name, shopping_lists.name
+        GROUP BY shopping_lists.id, shopping_lists.household_id, shopping_lists.name, shopping_lists.created_at
+        ORDER BY shopping_lists.name
       `,
       [userId],
     );
 
     return result.rows.map((row) => ({
       id: row.id,
-      householdId: row.householdid,
-      householdName: row.householdname,
-      name: row.name,
-      createdAt: toIsoString(row.createdat)!,
-      activeCount: Number(row.activecount),
-      completedCount: Number(row.completedcount),
+      householdId: row.household_id,
+      householdName: householdNames.get(row.household_id) ?? "",
+      name: row.list_name,
+      createdAt: toIsoString(row.created_at)!,
+      activeCount: Number(row.active_count),
+      completedCount: Number(row.completed_count),
     }));
   }
 
@@ -507,6 +515,15 @@ export class AppStore {
       [householdId],
     );
     return result.rows[0] ?? null;
+  }
+
+  async leaveHousehold(userId: number, householdId: number) {
+    await this.ensureMembership(userId, householdId);
+    await this.db.query("DELETE FROM household_memberships WHERE user_id = $1 AND household_id = $2", [
+      userId,
+      householdId,
+    ]);
+    return this.getSessionPayload(userId);
   }
 
   async getHouseholdState(userId: number, householdId: number): Promise<HouseholdState> {

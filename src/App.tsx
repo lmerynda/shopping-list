@@ -698,6 +698,7 @@ function SettingsView(props: {
   const [devInviteCode, setDevInviteCode] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const selectedHousehold = props.session.households.find((household) => household.id === selectedHouseholdId) ?? null;
 
   useEffect(() => {
     if (!props.session.households.some((household) => household.id === selectedHouseholdId)) {
@@ -782,6 +783,33 @@ function SettingsView(props: {
             Create household
           </button>
         </div>
+        {selectedHousehold ? (
+          <div className="danger-row">
+            <div>
+              <strong>Leave {selectedHousehold.name}</strong>
+              <p className="lede">You will lose access to its lists unless someone invites you again.</p>
+            </div>
+            <button
+              className="danger-button"
+              onClick={async () => {
+                try {
+                  const nextSession = await api<SessionPayload>(
+                    `/api/households/${selectedHousehold.id}/members/me`,
+                    { method: "DELETE" },
+                    props.token,
+                  );
+                  props.onSessionChange(nextSession);
+                  setStatus(`Left ${selectedHousehold.name}.`);
+                  setError(null);
+                } catch (nextError) {
+                  setError(nextError instanceof Error ? nextError.message : "Unable to leave household");
+                }
+              }}
+            >
+              Leave household
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
