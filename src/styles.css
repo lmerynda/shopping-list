@@ -46,23 +46,35 @@
 }
 
 html {
+  min-height: 100%;
   background:
     radial-gradient(circle at top right, rgba(125, 152, 110, 0.15), transparent 28%),
     radial-gradient(circle at bottom left, rgba(214, 180, 109, 0.12), transparent 26%),
     linear-gradient(180deg, var(--bg) 0%, var(--bg-accent) 100%);
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
   min-width: 320px;
+  min-height: 100vh;
+  min-height: 100dvh;
   color: var(--text);
   background: transparent;
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 button,
 input,
 select {
   font: inherit;
+}
+
+input,
+select,
+textarea {
+  font-size: 16px;
 }
 
 button {
