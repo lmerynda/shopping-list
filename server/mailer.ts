@@ -52,22 +52,31 @@ export async function sendInviteEmail(input: InviteEmailInput) {
   }
 
   const inviteUrl = `${config.clientOrigin}?invite=${encodeURIComponent(input.code)}`;
+  const sentAt = new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "America/Chicago",
+  }).format(new Date());
   await sendEmail({
     to: input.email,
     subject: `Join ${input.householdName} on Shopping List`,
     text: [
+      `Open this invite link: ${inviteUrl}`,
+      "",
       `You were invited to join ${input.householdName} on Shopping List.`,
+      `Sent: ${sentAt}`,
+      "",
+      "If prompted, sign in with this email address to join automatically.",
       "",
       `Invite code: ${input.code}`,
-      `Open the app: ${inviteUrl}`,
-      "",
-      "If you already have an account, sign in and use the invite code.",
     ].join("\n"),
     html: `
-      <p>You were invited to join <strong>${escapeHtml(input.householdName)}</strong> on Shopping List.</p>
-      <p><strong>Invite code:</strong> ${escapeHtml(input.code)}</p>
       <p><a href="${escapeAttribute(inviteUrl)}">Open Shopping List</a></p>
-      <p>If you already have an account, sign in and use the invite code.</p>
+      <p>${escapeHtml(inviteUrl)}</p>
+      <p>You were invited to join <strong>${escapeHtml(input.householdName)}</strong> on Shopping List.</p>
+      <p>Sent: ${escapeHtml(sentAt)}</p>
+      <p>If prompted, sign in with this email address to join automatically.</p>
+      <p><strong>Invite code:</strong> ${escapeHtml(input.code)}</p>
     `,
   });
 

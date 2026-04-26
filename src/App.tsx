@@ -61,6 +61,7 @@ export function App() {
   const [state, setState] = useState<HouseholdState | null>(null);
   const [pendingInviteCode, setPendingInviteCode] = useState(() => getInviteCodeFromUrl());
   const [invitePreview, setInvitePreview] = useState<InvitePreview | null>(null);
+  const [invitePreviewLoaded, setInvitePreviewLoaded] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -91,22 +92,26 @@ export function App() {
   useEffect(() => {
     if (!pendingInviteCode) {
       setInvitePreview(null);
+      setInvitePreviewLoaded(false);
       return;
     }
 
+    setInvitePreviewLoaded(false);
     api<InvitePreview>(`/api/invites/${pendingInviteCode}`)
       .then((preview) => {
         setInvitePreview(preview);
+        setInvitePreviewLoaded(true);
         setError(null);
       })
       .catch((nextError) => {
         setInvitePreview(null);
+        setInvitePreviewLoaded(true);
         setError(nextError.message);
       });
   }, [pendingInviteCode]);
 
   useEffect(() => {
-    if (!token || !session || !pendingInviteCode || inviteBusy) {
+    if (!token || !session || !pendingInviteCode || !invitePreviewLoaded || inviteBusy) {
       return;
     }
     if (invitePreview && session.user.email !== invitePreview.email) {
@@ -124,15 +129,17 @@ export function App() {
         setSelectedHouseholdId(nextSession.households.at(-1)?.id ?? null);
         setPendingInviteCode("");
         setInvitePreview(null);
+        setInvitePreviewLoaded(false);
         setError(null);
         window.history.replaceState(null, "", window.location.pathname);
       })
       .catch((nextError) => {
         setPendingInviteCode("");
+        setInvitePreviewLoaded(false);
         setError(nextError.message);
       })
       .finally(() => setInviteBusy(false));
-  }, [inviteBusy, invitePreview, pendingInviteCode, session, token]);
+  }, [inviteBusy, invitePreview, invitePreviewLoaded, pendingInviteCode, session, token]);
 
   useEffect(() => {
     if (!token || !selectedHouseholdId) {
