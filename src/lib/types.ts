@@ -10,6 +10,19 @@ export type Household = {
   role: "owner" | "member";
 };
 
+export type ShoppingList = {
+  id: number;
+  householdId: number;
+  householdName: string;
+  name: string;
+  createdAt: string;
+};
+
+export type ShoppingListSummary = ShoppingList & {
+  activeCount: number;
+  completedCount: number;
+};
+
 export type Category = {
   key: string;
   label: string;
@@ -18,6 +31,7 @@ export type Category = {
 
 export type ShoppingItem = {
   id: number;
+  listId: number;
   householdId: number;
   name: string;
   normalizedName: string;
@@ -49,4 +63,11 @@ export type HouseholdState = {
   activeItems: ShoppingItem[];
   completedItems: ShoppingItem[];
   invites: Invite[];
+};
+
+export type ShoppingListState = {
+  list: ShoppingList;
+  categories: Category[];
+  activeItems: ShoppingItem[];
+  completedItems: ShoppingItem[];
 };

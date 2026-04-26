@@ -14,6 +14,10 @@ export const createHouseholdSchema = z.object({
   name: z.string().trim().min(1).max(80),
 });
 
+export const createListSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+});
+
 export const inviteSchema = z.object({
   email: z.string().email(),
 });
