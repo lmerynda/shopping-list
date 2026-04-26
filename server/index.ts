@@ -252,6 +252,17 @@ app.post("/api/invites/accept", requireUser, async (req, res) => {
   }
 });
 
+app.delete("/api/invites/:inviteId", requireUser, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  try {
+    const householdId = await store.deletePendingInvite(userId, Number(req.params.inviteId));
+    broadcastHousehold(householdId);
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to remove invite" });
+  }
+});
+
 app.post("/api/households/:householdId/items", requireUser, async (req, res) => {
   const parsed = addItemSchema.safeParse(req.body);
   if (!parsed.success) {

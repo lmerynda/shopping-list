@@ -56,6 +56,21 @@ describe("AppStore", () => {
     await expect(store.acceptInvite(otherSession!.session.user.id, inviteCode)).rejects.toThrow(/email does not match/i);
   });
 
+  test("removes pending invites", async () => {
+    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
+    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
+    const household = (await store.createHousehold(ownerSession!.session.user.id, "Home")).households[0];
+    await store.createInvite(ownerSession!.session.user.id, household.id, "wife@example.com");
+
+    const withInvite = await store.getHouseholdState(ownerSession!.session.user.id, household.id);
+    expect(withInvite.invites).toHaveLength(1);
+
+    await store.deletePendingInvite(ownerSession!.session.user.id, withInvite.invites[0].id);
+
+    const withoutInvite = await store.getHouseholdState(ownerSession!.session.user.id, household.id);
+    expect(withoutInvite.invites).toHaveLength(0);
+  });
+
   test("keeps completed items completed when only category changes", async () => {
     const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
     const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);

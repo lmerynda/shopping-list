@@ -398,6 +398,12 @@ h3 {
   flex: 0 0 auto;
 }
 
+.invite-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
 .item-actions select {
   min-width: 140px;
 }

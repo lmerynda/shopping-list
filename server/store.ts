@@ -235,6 +235,21 @@ export class AppStore {
     return code;
   }
 
+  async deletePendingInvite(userId: number, inviteId: number) {
+    const inviteResult = await this.db.query<{ householdid: number; acceptedat: string | null }>(
+      "SELECT household_id AS householdId, accepted_at AS acceptedAt FROM invites WHERE id = $1",
+      [inviteId],
+    );
+    const invite = inviteResult.rows[0];
+    if (!invite || invite.acceptedat) {
+      throw new Error("Invite not found");
+    }
+
+    await this.ensureMembership(userId, invite.householdid);
+    await this.db.query("DELETE FROM invites WHERE id = $1", [inviteId]);
+    return invite.householdid;
+  }
+
   async acceptInvite(userId: number, code: string) {
     const inviteResult = await this.db.query<InviteRecord>(
       "SELECT id, household_id AS householdId, email, accepted_at AS acceptedAt FROM invites WHERE code = $1",

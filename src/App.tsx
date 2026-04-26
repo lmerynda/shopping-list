@@ -527,9 +527,29 @@ function HouseholdView(props: {
           {props.state.invites.map((invite) => (
             <li key={invite.id} className="invite-row">
               <span>{invite.email}</span>
-              <span className={invite.acceptedAt ? "status-pill accepted" : "status-pill pending"}>
-                {invite.acceptedAt ? "Joined" : "Pending"}
-              </span>
+              <div className="invite-actions">
+                <span className={invite.acceptedAt ? "status-pill accepted" : "status-pill pending"}>
+                  {invite.acceptedAt ? "Joined" : "Pending"}
+                </span>
+                {!invite.acceptedAt ? (
+                  <button
+                    className="text-button"
+                    onClick={async () => {
+                      setInviteStatus(null);
+                      setInviteError(null);
+                      try {
+                        await api(`/api/invites/${invite.id}`, { method: "DELETE" }, props.token);
+                        setInviteStatus(`Invite removed for ${invite.email}.`);
+                        props.onRefresh();
+                      } catch (error) {
+                        setInviteError(error instanceof Error ? error.message : "Unable to remove invite");
+                      }
+                    }}
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>
