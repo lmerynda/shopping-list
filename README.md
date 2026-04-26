@@ -30,7 +30,7 @@ For Resend email delivery, set:
 
 ```bash
 RESEND_API_KEY=<your-resend-api-key>
-MAIL_FROM=Shopping List <lmerynda.apps@gmail.com>
+MAIL_FROM=Shopping List <hello@mail.lmerynda.com>
 ```
 
 `MAIL_FROM` is required when `RESEND_API_KEY` is set.
@@ -54,7 +54,7 @@ DATABASE_URL=<Railway Postgres connection string>
 CLIENT_ORIGIN=<your frontend origin>
 CLIENT_ORIGIN_REGEX=^https://shopping-list-.*\\.vercel\\.app$
 RESEND_API_KEY=<your-resend-api-key>
-MAIL_FROM=Shopping List <lmerynda.apps@gmail.com>
+MAIL_FROM=Shopping List <hello@mail.lmerynda.com>
 PORT=4000
 ```
 

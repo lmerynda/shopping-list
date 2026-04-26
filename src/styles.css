@@ -420,6 +420,10 @@ h3 {
   color: var(--danger);
 }
 
+.success {
+  color: var(--accent);
+}
+
 @media (max-width: 860px) {
   .auth-layout,
   .hero {

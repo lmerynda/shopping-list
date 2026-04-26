@@ -24,6 +24,10 @@ function getInitialTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function getInviteCodeFromUrl() {
+  return new URLSearchParams(window.location.search).get("invite") ?? "";
+}
+
 async function api<T>(path: string, init?: RequestInit, token?: string): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -174,6 +178,7 @@ export function App() {
         <HouseholdToolbar
           session={session}
           selectedHouseholdId={selectedHouseholdId}
+          initialInviteCode={getInviteCodeFromUrl()}
           onSelect={setSelectedHouseholdId}
           onCreate={async (name) => {
             const nextSession = await api<SessionPayload>("/api/households", {
@@ -190,6 +195,7 @@ export function App() {
             }, token);
             setSession(nextSession);
             setSelectedHouseholdId(nextSession.households.at(-1)?.id ?? null);
+            window.history.replaceState(null, "", window.location.pathname);
           }}
         />
 
@@ -307,12 +313,13 @@ function AuthScreen(props: { onSignedIn: (token: string, session: SessionPayload
 function HouseholdToolbar(props: {
   session: SessionPayload;
   selectedHouseholdId: number | null;
+  initialInviteCode: string;
   onSelect: (householdId: number) => void;
   onCreate: (name: string) => Promise<void>;
   onAcceptInvite: (code: string) => Promise<void>;
 }) {
   const [householdName, setHouseholdName] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
+  const [inviteCode, setInviteCode] = useState(props.initialInviteCode);
   return (
     <section className="toolbar">
       <div className="toolbar-header">
@@ -380,6 +387,8 @@ function HouseholdView(props: {
   const [itemNote, setItemNote] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [inviteStatus, setInviteStatus] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   return (
     <div className="stack">
@@ -486,19 +495,29 @@ function HouseholdView(props: {
           <button
             onClick={async () => {
               if (!inviteEmail.trim()) return;
-              const result = await api<{ ok: true; devCode?: string }>(
-                `/api/households/${props.household.id}/invites`,
-                { method: "POST", body: JSON.stringify({ email: inviteEmail }) },
-                props.token,
-              );
-              setInviteCode(result.devCode ?? null);
-              setInviteEmail("");
-              props.onRefresh();
+              setInviteStatus(null);
+              setInviteError(null);
+              try {
+                const email = inviteEmail.trim();
+                const result = await api<{ ok: true; emailed: boolean; mailConfigured: boolean; devCode?: string }>(
+                  `/api/households/${props.household.id}/invites`,
+                  { method: "POST", body: JSON.stringify({ email }) },
+                  props.token,
+                );
+                setInviteCode(result.devCode ?? null);
+                setInviteStatus(result.emailed ? `Invite sent to ${email}.` : `Invite created for ${email}.`);
+                setInviteEmail("");
+                props.onRefresh();
+              } catch (error) {
+                setInviteError(error instanceof Error ? error.message : "Unable to send invite");
+              }
             }}
           >
             Send invite
           </button>
         </div>
+        {inviteStatus ? <p className="success">{inviteStatus}</p> : null}
+        {inviteError ? <p className="error">{inviteError}</p> : null}
         {inviteCode ? (
           <p className="dev-hint" data-testid="dev-invite-code">
             Dev invite code: {inviteCode}
