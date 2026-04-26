@@ -34,7 +34,7 @@ app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", config.clientOrigin);
   }
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   if (req.method === "OPTIONS") {
     if (!isAllowedOrigin) {
       res.status(403).end();
@@ -167,6 +167,14 @@ app.post("/api/auth/verify", async (req, res) => {
     return;
   }
   res.json(session);
+});
+
+app.get("/api/invites/:code", async (req, res) => {
+  try {
+    res.json(await store.getInvitePreview(req.params.code));
+  } catch {
+    res.status(404).json({ error: "Invite not found" });
+  }
 });
 
 app.get("/api/session", requireUser, async (req, res) => {

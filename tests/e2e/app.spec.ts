@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-async function signIn(page: import("@playwright/test").Page, email: string, name: string) {
-  await page.goto("/");
+async function signIn(page: import("@playwright/test").Page, email: string, name: string, path = "/") {
+  await page.goto(path);
   await page.getByLabel("Display name").fill(name);
   await page.getByLabel("Email").fill(email);
   await page.getByRole("button", { name: "Send magic code" }).click();
@@ -37,9 +37,7 @@ test("shared household flow works end to end", async ({ browser }) => {
   const inviteCode = inviteCodeText?.split(":").at(-1)?.trim();
   if (!inviteCode) throw new Error("Expected invite code");
 
-  await signIn(member, "wife@example.com", "Wife");
-  await member.getByLabel("Invite code").fill(inviteCode);
-  await member.getByRole("button", { name: "Join" }).click();
+  await signIn(member, "wife@example.com", "Wife", `/?invite=${inviteCode}`);
   await expect(member.getByRole("heading", { name: "Smith Home" })).toBeVisible();
   await expect(member.locator(".panel").nth(1).getByText("Milk")).toBeVisible();
 

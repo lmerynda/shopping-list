@@ -235,6 +235,33 @@ export class AppStore {
     return code;
   }
 
+  async getInvitePreview(code: string) {
+    const inviteResult = await this.db.query<{
+      email: string;
+      householdname: string;
+      acceptedat: string | null;
+    }>(
+      `
+        SELECT invites.email,
+               households.name AS householdName,
+               invites.accepted_at AS acceptedAt
+        FROM invites
+        JOIN households ON households.id = invites.household_id
+        WHERE invites.code = $1
+      `,
+      [code],
+    );
+    const invite = inviteResult.rows[0];
+    if (!invite || invite.acceptedat) {
+      throw new Error("Invite not found");
+    }
+
+    return {
+      email: invite.email,
+      householdName: invite.householdname,
+    };
+  }
+
   async deletePendingInvite(userId: number, inviteId: number) {
     const inviteResult = await this.db.query<{ householdid: number; acceptedat: string | null }>(
       "SELECT household_id AS householdId, accepted_at AS acceptedAt FROM invites WHERE id = $1",

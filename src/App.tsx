@@ -10,6 +10,10 @@ const THEME_KEY = "shopping-list-theme";
 
 type AuthStep = "request" | "verify";
 type Theme = "light" | "dark";
+type InvitePreview = {
+  email: string;
+  householdName: string;
+};
 
 function getSavedToken() {
   return window.localStorage.getItem(STORAGE_KEY);
@@ -55,6 +59,9 @@ export function App() {
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<number | null>(null);
   const [state, setState] = useState<HouseholdState | null>(null);
+  const [pendingInviteCode, setPendingInviteCode] = useState(() => getInviteCodeFromUrl());
+  const [invitePreview, setInvitePreview] = useState<InvitePreview | null>(null);
+  const [inviteBusy, setInviteBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
@@ -80,6 +87,52 @@ export function App() {
         setError(nextError.message);
       });
   }, [token]);
+
+  useEffect(() => {
+    if (!pendingInviteCode) {
+      setInvitePreview(null);
+      return;
+    }
+
+    api<InvitePreview>(`/api/invites/${pendingInviteCode}`)
+      .then((preview) => {
+        setInvitePreview(preview);
+        setError(null);
+      })
+      .catch((nextError) => {
+        setInvitePreview(null);
+        setError(nextError.message);
+      });
+  }, [pendingInviteCode]);
+
+  useEffect(() => {
+    if (!token || !session || !pendingInviteCode || inviteBusy) {
+      return;
+    }
+    if (invitePreview && session.user.email !== invitePreview.email) {
+      setError(`This invite is for ${invitePreview.email}. Sign out and use that email to join.`);
+      return;
+    }
+
+    setInviteBusy(true);
+    api<SessionPayload>("/api/invites/accept", {
+      method: "POST",
+      body: JSON.stringify({ code: pendingInviteCode }),
+    }, token)
+      .then((nextSession) => {
+        setSession(nextSession);
+        setSelectedHouseholdId(nextSession.households.at(-1)?.id ?? null);
+        setPendingInviteCode("");
+        setInvitePreview(null);
+        setError(null);
+        window.history.replaceState(null, "", window.location.pathname);
+      })
+      .catch((nextError) => {
+        setPendingInviteCode("");
+        setError(nextError.message);
+      })
+      .finally(() => setInviteBusy(false));
+  }, [inviteBusy, invitePreview, pendingInviteCode, session, token]);
 
   useEffect(() => {
     if (!token || !selectedHouseholdId) {
@@ -135,6 +188,8 @@ export function App() {
             </div>
             <div className="auth-panel">
               <AuthScreen
+                initialEmail={invitePreview?.email ?? ""}
+                inviteHouseholdName={invitePreview?.householdName ?? null}
                 onSignedIn={(nextToken, nextSession) => {
                   window.localStorage.setItem(STORAGE_KEY, nextToken);
                   setToken(nextToken);
@@ -178,7 +233,6 @@ export function App() {
         <HouseholdToolbar
           session={session}
           selectedHouseholdId={selectedHouseholdId}
-          initialInviteCode={getInviteCodeFromUrl()}
           onSelect={setSelectedHouseholdId}
           onCreate={async (name) => {
             const nextSession = await api<SessionPayload>("/api/households", {
@@ -187,15 +241,6 @@ export function App() {
             }, token);
             setSession(nextSession);
             setSelectedHouseholdId(nextSession.households.at(-1)?.id ?? null);
-          }}
-          onAcceptInvite={async (code) => {
-            const nextSession = await api<SessionPayload>("/api/invites/accept", {
-              method: "POST",
-              body: JSON.stringify({ code }),
-            }, token);
-            setSession(nextSession);
-            setSelectedHouseholdId(nextSession.households.at(-1)?.id ?? null);
-            window.history.replaceState(null, "", window.location.pathname);
           }}
         />
 
@@ -226,17 +271,30 @@ function EmptyState() {
   );
 }
 
-function AuthScreen(props: { onSignedIn: (token: string, session: SessionPayload) => void }) {
+function AuthScreen(props: {
+  initialEmail: string;
+  inviteHouseholdName: string | null;
+  onSignedIn: (token: string, session: SessionPayload) => void;
+}) {
   const [step, setStep] = useState<AuthStep>("request");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(props.initialEmail);
   const [displayName, setDisplayName] = useState("");
   const [code, setCode] = useState("");
   const [devCode, setDevCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (props.initialEmail) {
+      setEmail(props.initialEmail);
+    }
+  }, [props.initialEmail]);
+
   return (
     <div className="stack">
+      {props.inviteHouseholdName ? (
+        <p className="success">Sign in as {props.initialEmail} to join {props.inviteHouseholdName}.</p>
+      ) : null}
       {step === "request" ? (
         <>
           <label className="field">
@@ -313,19 +371,16 @@ function AuthScreen(props: { onSignedIn: (token: string, session: SessionPayload
 function HouseholdToolbar(props: {
   session: SessionPayload;
   selectedHouseholdId: number | null;
-  initialInviteCode: string;
   onSelect: (householdId: number) => void;
   onCreate: (name: string) => Promise<void>;
-  onAcceptInvite: (code: string) => Promise<void>;
 }) {
   const [householdName, setHouseholdName] = useState("");
-  const [inviteCode, setInviteCode] = useState(props.initialInviteCode);
   return (
     <section className="toolbar">
       <div className="toolbar-header">
         <div>
           <span className="section-label">Households</span>
-          <p className="section-copy">Switch homes, create a new one, or join from an invite code.</p>
+          <p className="section-copy">Switch homes or create a new one.</p>
         </div>
       </div>
       <div className="toolbar-row">
@@ -358,19 +413,6 @@ function HouseholdToolbar(props: {
           }}
         >
           Create home
-        </button>
-        <label className="compact field">
-          Invite code
-          <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} placeholder="Use family invite code" />
-        </label>
-        <button
-          onClick={async () => {
-            if (!inviteCode.trim()) return;
-            await props.onAcceptInvite(inviteCode.trim());
-            setInviteCode("");
-          }}
-        >
-          Join home
         </button>
       </div>
     </section>
