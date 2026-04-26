@@ -24,13 +24,16 @@ test("shared household flow works end to end", async ({ browser }) => {
 
   await signIn(owner, "owner@example.com", "Owner");
   await owner.getByLabel("New household").fill("Smith Home");
-  await owner.getByRole("button", { name: "Create" }).click();
-  await expect(owner.getByRole("heading", { name: "Smith Home" })).toBeVisible();
+  await owner.getByRole("button", { name: "Create household" }).click();
+  await expect(owner.getByRole("button", { name: /Groceries/ })).toBeVisible();
+  await owner.getByRole("button", { name: /Groceries/ }).click();
+  await expect(owner.getByRole("heading", { name: "Groceries" })).toBeVisible();
 
   await owner.getByPlaceholder("Milk").fill("Milk");
-  await owner.getByRole("button", { name: "Add" }).click();
-  await expect(owner.locator(".panel").nth(1).getByText("Milk")).toBeVisible();
+  await owner.getByRole("button", { name: "Add item" }).click();
+  await expect(owner.locator(".list-panel").getByText("Milk")).toBeVisible();
 
+  await owner.getByRole("button", { name: "Settings" }).click();
   await owner.getByPlaceholder("family@example.com").fill("wife@example.com");
   await owner.getByRole("button", { name: "Send invite" }).click();
   const inviteCodeText = await owner.getByTestId("dev-invite-code").textContent();
@@ -38,19 +41,23 @@ test("shared household flow works end to end", async ({ browser }) => {
   if (!inviteCode) throw new Error("Expected invite code");
 
   await signIn(member, "wife@example.com", "Wife", `/?invite=${inviteCode}`);
-  await expect(member.getByRole("heading", { name: "Smith Home" })).toBeVisible();
-  await expect(member.locator(".panel").nth(1).getByText("Milk")).toBeVisible();
+  await expect(member.getByRole("button", { name: /Groceries/ })).toBeVisible();
+  await member.getByRole("button", { name: /Groceries/ }).click();
+  await expect(member.locator(".list-panel").getByText("Milk")).toBeVisible();
 
-  await member.locator(".panel").nth(1).getByRole("button", { name: "Mark bought" }).click();
-  await expect(member.locator(".panel").nth(1).getByText("Nothing here yet.")).toBeVisible();
-  await expect(owner.locator(".panel").nth(1).getByText("Nothing here yet.")).toBeVisible();
-  await expect(owner.locator(".panel").nth(2).getByText("Milk")).toBeVisible();
+  await member.locator(".list-panel").getByRole("button", { name: "Mark bought" }).click();
+  await expect(member.locator(".list-panel").getByText("Nothing here yet.")).toBeVisible();
+  await owner.getByRole("button", { name: "Back" }).click();
+  await owner.getByRole("button", { name: /Groceries/ }).click();
+  await expect(owner.locator(".list-panel").getByText("Nothing here yet.")).toBeVisible();
+  await owner.getByRole("button", { name: /Bought/ }).click();
+  await expect(owner.getByText("Milk")).toBeVisible();
 
-  await owner.locator(".panel").nth(2).getByRole("button", { name: "Re-add" }).click();
-  await expect(member.locator(".panel").nth(1).getByText("Milk")).toBeVisible();
+  await owner.getByRole("button", { name: "Re-add" }).click();
+  await expect(member.locator(".list-panel").getByText("Milk")).toBeVisible();
 
-  await owner.locator(".panel").nth(1).getByRole("combobox").selectOption("pharmacy");
+  await owner.locator(".list-panel").getByRole("combobox").selectOption("pharmacy");
   await owner.getByPlaceholder("Milk").fill("Milk");
-  await owner.getByRole("button", { name: "Add" }).click();
-  await expect(owner.locator(".panel").nth(1).locator(".category-pill").filter({ hasText: "Pharmacy" })).toBeVisible();
+  await owner.getByRole("button", { name: "Add item" }).click();
+  await expect(owner.locator(".list-panel").locator(".category-pill").filter({ hasText: "Pharmacy" })).toBeVisible();
 });
