@@ -146,6 +146,13 @@ select:focus {
   gap: 1rem;
 }
 
+.app-error {
+  padding: 0.8rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
 .auth-layout {
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
@@ -173,6 +180,8 @@ select:focus {
 .header-actions,
 .toolbar-row,
 .panel-header,
+.detail-header,
+.settings-row,
 .item-row,
 .item-actions,
 .item-title-row,
@@ -205,6 +214,10 @@ select:focus {
   padding: 1.15rem;
   border-radius: 28px;
   background: linear-gradient(135deg, var(--brand-strong), var(--brand));
+  color: var(--brand-contrast);
+}
+
+.compact-hero h1 {
   color: var(--brand-contrast);
 }
 
@@ -319,6 +332,24 @@ select:focus {
   color: var(--brand-contrast);
 }
 
+.brand-button {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.brand-button:hover {
+  transform: none;
+}
+
+.signed-in {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 .ghost-button,
 .text-button {
   background: transparent;
@@ -380,6 +411,104 @@ h3 {
   list-style: none;
   padding: 0;
   margin: 0;
+}
+
+.list-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+.list-card,
+.household-row,
+.section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface-strong);
+  color: var(--text);
+  text-align: left;
+}
+
+.list-card {
+  min-height: 112px;
+  padding: 1rem;
+}
+
+.list-card-main,
+.list-card-counts,
+.household-list,
+.settings-grid {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.list-card-main span,
+.list-card-counts {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.list-card-counts {
+  justify-items: end;
+  white-space: nowrap;
+}
+
+.detail-header {
+  align-items: flex-start;
+  padding: 0.25rem 0;
+}
+
+.detail-header h1 {
+  font-size: clamp(1.9rem, 4vw, 2.8rem);
+}
+
+.section-toggle {
+  padding: 0.95rem 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-weight: 700;
+}
+
+.section-toggle:hover {
+  transform: none;
+}
+
+.household-list {
+  gap: 0.75rem;
+}
+
+.household-row {
+  padding: 0.85rem 1rem;
+}
+
+.household-row.selected {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
+}
+
+.settings-form {
+  margin-top: 1rem;
+}
+
+.danger-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.danger-button {
+  background: var(--danger);
+  color: #fff;
 }
 
 .item-row,
@@ -466,6 +595,9 @@ h3 {
   .app-header,
   .header-actions,
   .panel-header,
+  .detail-header,
+  .settings-row,
+  .danger-row,
   .toolbar-row,
   .item-row,
   .item-actions,
@@ -485,5 +617,13 @@ h3 {
 
   .theme-chip {
     flex: 1 1 auto;
+  }
+
+  .list-card {
+    min-height: 96px;
+  }
+
+  .list-card-counts {
+    justify-items: start;
   }
 }

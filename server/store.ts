@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { DEFAULT_CATEGORIES, inferDefaultCategory, normalizeItemName, sortCategories } from "../src/lib/categories.js";
-import type { HouseholdState, SessionPayload } from "../src/lib/types.js";
+import type { HouseholdState, SessionPayload, ShoppingListState, ShoppingListSummary } from "../src/lib/types.js";
 import { runMigrations } from "./migrate.js";
 
 type Session = {
@@ -39,6 +39,7 @@ type InviteRecord = {
 
 type ItemRecord = {
   id: number;
+  listid: number;
   householdid: number;
   name: string;
   note: string | null;
@@ -107,7 +108,7 @@ export class AppStore {
 
   async resetForTests() {
     await this.db.query(
-      "TRUNCATE TABLE category_rules, household_categories, invites, household_memberships, items, households, magic_codes, users RESTART IDENTITY CASCADE",
+      "TRUNCATE TABLE category_rules, household_categories, invites, household_memberships, items, shopping_lists, households, magic_codes, users RESTART IDENTITY CASCADE",
     );
     this.sessions.clear();
   }
@@ -208,6 +209,12 @@ export class AppStore {
         [householdId, category.key, category.label, category.sortOrder],
       );
     }
+
+    await this.db.query("INSERT INTO shopping_lists (household_id, name, created_at) VALUES ($1, $2, $3)", [
+      householdId,
+      "Groceries",
+      createdAt,
+    ]);
 
     return this.getSessionPayload(userId);
   }
@@ -317,16 +324,29 @@ export class AppStore {
 
   async addItem(userId: number, householdId: number, name: string, note?: string) {
     await this.ensureMembership(userId, householdId);
+    const listResult = await this.db.query<{ id: number }>(
+      "SELECT id FROM shopping_lists WHERE household_id = $1 ORDER BY id LIMIT 1",
+      [householdId],
+    );
+    const listId = listResult.rows[0]?.id;
+    if (!listId) {
+      throw new Error("List not found");
+    }
+    return this.addListItem(userId, listId, name, note);
+  }
+
+  async addListItem(userId: number, listId: number, name: string, note?: string) {
+    const list = await this.ensureListAccess(userId, listId);
     const timestamp = now();
     const normalized = normalizeItemName(name);
-    const categoryKey = await this.resolveCategory(householdId, name);
+    const categoryKey = await this.resolveCategory(list.householdId, name);
     const result = await this.db.query<{ id: number }>(
       `
-        INSERT INTO items (household_id, name, normalized_name, note, category_key, status, created_at, updated_at, completed_at)
-        VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, NULL)
+        INSERT INTO items (household_id, list_id, name, normalized_name, note, category_key, status, created_at, updated_at, completed_at)
+        VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, NULL)
         RETURNING id
       `,
-      [householdId, name.trim(), normalized, note?.trim() || null, categoryKey, timestamp, timestamp],
+      [list.householdId, listId, name.trim(), normalized, note?.trim() || null, categoryKey, timestamp, timestamp],
     );
     return result.rows[0].id;
   }
@@ -337,7 +357,7 @@ export class AppStore {
     patch: { name?: string; note?: string | null; categoryKey?: string; status?: "active" | "completed" },
   ) {
     const itemResult = await this.db.query<ItemRecord>(
-      "SELECT id, household_id AS householdId, name, note, status, completed_at AS completedAt FROM items WHERE id = $1",
+      "SELECT id, list_id AS listId, household_id AS householdId, name, note, status, completed_at AS completedAt FROM items WHERE id = $1",
       [itemId],
     );
     const item = itemResult.rows[0];
@@ -389,6 +409,105 @@ export class AppStore {
     return result.rows[0]?.householdid ?? null;
   }
 
+  async getItemListId(itemId: number) {
+    const result = await this.db.query<{ listid: number }>("SELECT list_id AS listId FROM items WHERE id = $1", [itemId]);
+    return result.rows[0]?.listid ?? null;
+  }
+
+  async ensureListAccess(userId: number, listId: number) {
+    const result = await this.db.query<{ id: number; household_id: number; household_name: string; list_name: string; created_at: string }>(
+      `
+        SELECT shopping_lists.id,
+               shopping_lists.household_id AS household_id,
+               households.name AS household_name,
+               shopping_lists.name AS list_name,
+               shopping_lists.created_at AS created_at
+        FROM shopping_lists
+        JOIN households ON households.id = shopping_lists.household_id
+        JOIN household_memberships ON household_memberships.household_id = households.id
+        WHERE shopping_lists.id = $1
+          AND household_memberships.user_id = $2
+      `,
+      [listId, userId],
+    );
+    const list = result.rows[0];
+    if (!list) {
+      throw new Error("Forbidden");
+    }
+    return {
+      id: list.id,
+      householdId: list.household_id,
+      householdName: list.household_name,
+      name: list.list_name,
+      createdAt: toIsoString(list.created_at)!,
+    };
+  }
+
+  async getListHouseholdId(listId: number) {
+    const result = await this.db.query<{ householdid: number }>(
+      "SELECT household_id AS householdId FROM shopping_lists WHERE id = $1",
+      [listId],
+    );
+    return result.rows[0]?.householdid ?? null;
+  }
+
+  async createList(userId: number, householdId: number, name: string) {
+    await this.ensureMembership(userId, householdId);
+    const result = await this.db.query<{ id: number }>(
+      "INSERT INTO shopping_lists (household_id, name, created_at) VALUES ($1, $2, $3) RETURNING id",
+      [householdId, name, now()],
+    );
+    return result.rows[0].id;
+  }
+
+  async getListSummaries(userId: number): Promise<ShoppingListSummary[]> {
+    const householdsResult = await this.db.query<{ id: number; name: string }>(
+      `
+        SELECT households.id, households.name
+        FROM households
+        JOIN household_memberships ON household_memberships.household_id = households.id
+        WHERE household_memberships.user_id = $1
+      `,
+      [userId],
+    );
+    const householdNames = new Map(householdsResult.rows.map((household) => [household.id, household.name]));
+    const result = await this.db.query<{
+      id: number;
+      household_id: number;
+      list_name: string;
+      created_at: string;
+      active_count: string | number;
+      completed_count: string | number;
+    }>(
+      `
+        SELECT shopping_lists.id,
+               shopping_lists.household_id AS household_id,
+               shopping_lists.name AS list_name,
+               shopping_lists.created_at AS created_at,
+               COUNT(items.id) FILTER (WHERE items.status = 'active') AS active_count,
+               COUNT(items.id) FILTER (WHERE items.status = 'completed') AS completed_count
+        FROM shopping_lists
+        JOIN households ON households.id = shopping_lists.household_id
+        JOIN household_memberships ON household_memberships.household_id = households.id
+        LEFT JOIN items ON items.list_id = shopping_lists.id
+        WHERE household_memberships.user_id = $1
+        GROUP BY shopping_lists.id, shopping_lists.household_id, shopping_lists.name, shopping_lists.created_at
+        ORDER BY shopping_lists.name
+      `,
+      [userId],
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      householdId: row.household_id,
+      householdName: householdNames.get(row.household_id) ?? "",
+      name: row.list_name,
+      createdAt: toIsoString(row.created_at)!,
+      activeCount: Number(row.active_count),
+      completedCount: Number(row.completed_count),
+    }));
+  }
+
   async getHousehold(userId: number, householdId: number) {
     await this.ensureMembership(userId, householdId);
     const result = await this.db.query<{ id: number; name: string }>(
@@ -396,6 +515,15 @@ export class AppStore {
       [householdId],
     );
     return result.rows[0] ?? null;
+  }
+
+  async leaveHousehold(userId: number, householdId: number) {
+    await this.ensureMembership(userId, householdId);
+    await this.db.query("DELETE FROM household_memberships WHERE user_id = $1 AND household_id = $2", [
+      userId,
+      householdId,
+    ]);
+    return this.getSessionPayload(userId);
   }
 
   async getHouseholdState(userId: number, householdId: number): Promise<HouseholdState> {
@@ -411,6 +539,7 @@ export class AppStore {
     const categoryMap = new Map(categoriesResult.rows.map((category) => [category.key, category.sortorder]));
     const rowsResult = await this.db.query<{
       id: number;
+      listid: number;
       householdid: number;
       name: string;
       normalizedname: string;
@@ -424,6 +553,7 @@ export class AppStore {
     }>(
       `
         SELECT items.id,
+               items.list_id AS listId,
                items.household_id AS householdId,
                items.name,
                items.normalized_name AS normalizedName,
@@ -455,6 +585,7 @@ export class AppStore {
 
     const rows = rowsResult.rows.map((item) => ({
       id: item.id,
+      listId: item.listid,
       householdId: item.householdid,
       name: item.name,
       normalizedName: item.normalizedname,
@@ -492,6 +623,82 @@ export class AppStore {
         createdAt: invite.createdat,
         acceptedAt: invite.acceptedat,
       })),
+    };
+  }
+
+  async getListState(userId: number, listId: number): Promise<ShoppingListState> {
+    const list = await this.ensureListAccess(userId, listId);
+    const categoriesResult = await this.db.query<{ key: string; label: string; sortorder: number }>(
+      "SELECT category_key AS key, label, sort_order AS sortOrder FROM household_categories WHERE household_id = $1 ORDER BY sort_order",
+      [list.householdId],
+    );
+    const categoryMap = new Map(categoriesResult.rows.map((category) => [category.key, category.sortorder]));
+    const rowsResult = await this.db.query<{
+      id: number;
+      listid: number;
+      householdid: number;
+      name: string;
+      normalizedname: string;
+      note: string | null;
+      categorykey: string;
+      categorylabel: string;
+      status: "active" | "completed";
+      createdat: string;
+      updatedat: string;
+      completedat: string | null;
+    }>(
+      `
+        SELECT items.id,
+               items.list_id AS listId,
+               items.household_id AS householdId,
+               items.name,
+               items.normalized_name AS normalizedName,
+               items.note,
+               items.category_key AS categoryKey,
+               household_categories.label AS categoryLabel,
+               items.status,
+               items.created_at AS createdAt,
+               items.updated_at AS updatedAt,
+               items.completed_at AS completedAt
+        FROM items
+        JOIN household_categories
+          ON household_categories.household_id = items.household_id
+         AND household_categories.category_key = items.category_key
+        WHERE items.list_id = $1
+      `,
+      [listId],
+    );
+
+    const rows = rowsResult.rows.map((item) => ({
+      id: item.id,
+      listId: item.listid,
+      householdId: item.householdid,
+      name: item.name,
+      normalizedName: item.normalizedname,
+      note: item.note,
+      categoryKey: item.categorykey,
+      categoryLabel: item.categorylabel,
+      status: item.status,
+      createdAt: toIsoString(item.createdat)!,
+      updatedAt: toIsoString(item.updatedat)!,
+      completedAt: toIsoString(item.completedat),
+    }));
+
+    return {
+      list,
+      categories: categoriesResult.rows.map((category) => ({
+        key: category.key,
+        label: category.label,
+        sortOrder: category.sortorder,
+      })),
+      activeItems: sortCategories(
+        rows.filter((item) => item.status === "active"),
+        categoryMap,
+      ),
+      completedItems: sortCategories(
+        rows.filter((item) => item.status === "completed"),
+        categoryMap,
+      ),
     };
   }
 }

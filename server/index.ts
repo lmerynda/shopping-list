@@ -8,6 +8,7 @@ import {
   acceptInviteSchema,
   addItemSchema,
   createHouseholdSchema,
+  createListSchema,
   inviteSchema,
   requestCodeSchema,
   updateItemSchema,
@@ -69,7 +70,7 @@ function requireUser(req: express.Request, res: express.Response, next: express.
   next();
 }
 
-type Client = { ws: import("ws").WebSocket; userId: number; householdId: number };
+type Client = { ws: import("ws").WebSocket; userId: number; householdId?: number; listId?: number };
 const clients = new Set<Client>();
 
 function broadcastHousehold(householdId: number) {
@@ -80,25 +81,41 @@ function broadcastHousehold(householdId: number) {
   }
 }
 
-wss.on("connection", (ws, req) => {
+function broadcastList(listId: number, householdId: number) {
+  for (const client of clients) {
+    if (client.listId === listId && client.ws.readyState === client.ws.OPEN) {
+      client.ws.send(JSON.stringify({ type: "list-updated", listId }));
+    }
+    if (client.householdId === householdId && client.ws.readyState === client.ws.OPEN) {
+      client.ws.send(JSON.stringify({ type: "household-updated", householdId }));
+    }
+  }
+}
+
+wss.on("connection", async (ws, req) => {
   const url = new URL(req.url ?? "", "http://localhost");
   const token = url.searchParams.get("token") ?? undefined;
   const householdId = Number(url.searchParams.get("householdId"));
+  const listId = Number(url.searchParams.get("listId"));
   const userId = store.getUserIdFromToken(token);
 
-  if (!userId || !householdId) {
+  if (!userId || (!householdId && !listId)) {
     ws.close();
     return;
   }
 
   try {
-    store.ensureMembership(userId, householdId);
+    if (listId) {
+      await store.ensureListAccess(userId, listId);
+    } else {
+      await store.ensureMembership(userId, householdId);
+    }
   } catch {
     ws.close();
     return;
   }
 
-  const client = { ws, userId, householdId };
+  const client = { ws, userId, householdId: householdId || undefined, listId: listId || undefined };
   clients.add(client);
   ws.on("close", () => {
     clients.delete(client);
@@ -192,6 +209,37 @@ app.post("/api/households", requireUser, async (req, res) => {
   res.status(201).json(await store.createHousehold(userId, parsed.data.name));
 });
 
+app.get("/api/lists", requireUser, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  res.json(await store.getListSummaries(userId));
+});
+
+app.post("/api/households/:householdId/lists", requireUser, async (req, res) => {
+  const parsed = createListSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const userId = (req as express.Request & { userId: number }).userId;
+  const householdId = Number(req.params.householdId);
+  try {
+    const id = await store.createList(userId, householdId, parsed.data.name);
+    broadcastHousehold(householdId);
+    res.status(201).json({ id });
+  } catch {
+    res.status(403).json({ error: "Forbidden" });
+  }
+});
+
+app.get("/api/lists/:listId", requireUser, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  try {
+    res.json(await store.getListState(userId, Number(req.params.listId)));
+  } catch {
+    res.status(403).json({ error: "Forbidden" });
+  }
+});
+
 app.get("/api/households/:householdId", requireUser, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   try {
@@ -271,6 +319,18 @@ app.delete("/api/invites/:inviteId", requireUser, async (req, res) => {
   }
 });
 
+app.delete("/api/households/:householdId/members/me", requireUser, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  const householdId = Number(req.params.householdId);
+  try {
+    const session = await store.leaveHousehold(userId, householdId);
+    broadcastHousehold(householdId);
+    res.json(session);
+  } catch {
+    res.status(403).json({ error: "Forbidden" });
+  }
+});
+
 app.post("/api/households/:householdId/items", requireUser, async (req, res) => {
   const parsed = addItemSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -282,6 +342,26 @@ app.post("/api/households/:householdId/items", requireUser, async (req, res) => 
   try {
     const itemId = await store.addItem(userId, householdId, parsed.data.name, parsed.data.note);
     broadcastHousehold(householdId);
+    res.status(201).json({ id: itemId });
+  } catch {
+    res.status(403).json({ error: "Forbidden" });
+  }
+});
+
+app.post("/api/lists/:listId/items", requireUser, async (req, res) => {
+  const parsed = addItemSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const userId = (req as express.Request & { userId: number }).userId;
+  const listId = Number(req.params.listId);
+  try {
+    const itemId = await store.addListItem(userId, listId, parsed.data.name, parsed.data.note);
+    const householdId = await store.getListHouseholdId(listId);
+    if (householdId) {
+      broadcastList(listId, householdId);
+    }
     res.status(201).json({ id: itemId });
   } catch {
     res.status(403).json({ error: "Forbidden" });
@@ -304,8 +384,11 @@ app.patch("/api/items/:itemId", requireUser, async (req, res) => {
   }
 
   try {
+    const listId = await store.getItemListId(Number(req.params.itemId));
     const householdId = await store.getItemHouseholdId(Number(req.params.itemId));
-    if (householdId) {
+    if (listId && householdId) {
+      broadcastList(listId, householdId);
+    } else if (householdId) {
       broadcastHousehold(householdId);
     }
   } catch {
