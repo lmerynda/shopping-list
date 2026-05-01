@@ -16,6 +16,8 @@ type InvitePreview = {
   householdName: string;
 };
 
+// test
+
 function getSavedToken() {
   return window.localStorage.getItem(STORAGE_KEY);
 }
