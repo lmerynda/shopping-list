@@ -28,12 +28,9 @@ export const acceptInviteSchema = z.object({
 
 export const addItemSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  note: z.string().trim().max(280).optional().or(z.literal("")),
 });
 
 export const updateItemSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
-  note: z.string().trim().max(280).nullable().optional(),
-  categoryKey: z.string().trim().min(1).max(40).optional(),
   status: z.enum(["active", "completed"]).optional(),
 });

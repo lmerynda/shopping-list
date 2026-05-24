@@ -23,6 +23,7 @@ test("shared household flow works end to end", async ({ browser }) => {
   const member = await memberContext.newPage();
 
   await signIn(owner, "owner@example.com", "Owner");
+  await owner.setViewportSize({ width: 390, height: 844 });
   await owner.getByLabel("New household").fill("Smith Home");
   await owner.getByRole("button", { name: "Create household" }).click();
   await expect(owner.getByRole("button", { name: /Groceries/ })).toBeVisible();
@@ -32,6 +33,8 @@ test("shared household flow works end to end", async ({ browser }) => {
   await owner.getByPlaceholder("Milk").fill("Milk");
   await owner.getByRole("button", { name: "Add item" }).click();
   await expect(owner.locator(".list-panel").getByText("Milk")).toBeVisible();
+  const rowBox = await owner.locator(".list-panel .item-row").first().boundingBox();
+  expect(rowBox?.height).toBeLessThanOrEqual(48);
 
   await owner.getByRole("button", { name: "Settings" }).click();
   await owner.getByPlaceholder("family@example.com").fill("wife@example.com");
@@ -56,8 +59,11 @@ test("shared household flow works end to end", async ({ browser }) => {
   await owner.getByRole("button", { name: "Re-add" }).click();
   await expect(member.locator(".list-panel").getByText("Milk")).toBeVisible();
 
-  await owner.locator(".list-panel").getByRole("combobox").selectOption("pharmacy");
-  await owner.getByPlaceholder("Milk").fill("Milk");
+  await owner.getByPlaceholder("Milk").fill("Mi");
+  await expect(owner.getByRole("button", { name: "Milk" })).toBeVisible();
+  await owner.getByRole("button", { name: "Milk" }).click();
+  await expect(owner.locator(".list-panel .item-row")).toHaveCount(1);
+  await owner.getByPlaceholder("Milk").fill("Bread");
   await owner.getByRole("button", { name: "Add item" }).click();
-  await expect(owner.locator(".list-panel").locator(".category-pill").filter({ hasText: "Pharmacy" })).toBeVisible();
+  await expect(owner.locator(".list-panel").getByText("Bread")).toBeVisible();
 });

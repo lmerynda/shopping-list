@@ -28,7 +28,10 @@ export const DEFAULT_CATEGORIES: CategoryDefinition[] = [
 ];
 
 const KEYWORD_MAP: Array<{ match: RegExp; category: CategoryKey }> = [
-  { match: /\b(apple|banana|lettuce|onion|tomato|avocado|pepper|potato|orange|grape)\b/i, category: "produce" },
+  {
+    match: /\b(apple|banana|bananas|blueberry|blueberries|lettuce|onion|tomato|avocado|pepper|potato|orange|grape)\b/i,
+    category: "produce",
+  },
   { match: /\b(milk|cheese|yogurt|butter|cream|egg)\b/i, category: "dairy" },
   { match: /\b(chicken|beef|pork|fish|salmon|turkey|sausage)\b/i, category: "meat" },
   { match: /\b(rice|pasta|flour|sugar|oil|coffee|tea|cereal|bread crumbs)\b/i, category: "pantry" },

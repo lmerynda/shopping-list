@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { DEFAULT_CATEGORIES, inferDefaultCategory, normalizeItemName, sortCategories } from "../src/lib/categories.js";
-import type { HouseholdState, SessionPayload, ShoppingListState, ShoppingListSummary } from "../src/lib/types.js";
+import { ITEM_CATALOG } from "../src/lib/itemCatalog.js";
+import type { HouseholdState, ItemSuggestion, SessionPayload, ShoppingListState, ShoppingListSummary } from "../src/lib/types.js";
 import { runMigrations } from "./migrate.js";
 
 type Session = {
@@ -44,9 +45,15 @@ type ItemRecord = {
   listid: number;
   householdid: number;
   name: string;
-  note: string | null;
   status: "active" | "completed";
   completedat: string | null;
+};
+
+type HistoryRecord = {
+  normalizedname: string;
+  displayname: string;
+  usecount: number | string;
+  lastusedat: string;
 };
 
 function now(): string {
@@ -110,7 +117,7 @@ export class AppStore {
 
   async resetForTests() {
     await this.db.query(
-      "TRUNCATE TABLE category_rules, household_categories, invites, household_memberships, items, shopping_lists, households, magic_codes, users RESTART IDENTITY CASCADE",
+      "TRUNCATE TABLE user_item_history, household_item_history, household_categories, invites, household_memberships, items, shopping_lists, households, magic_codes, users RESTART IDENTITY CASCADE",
     );
     this.sessions.clear();
   }
@@ -315,16 +322,11 @@ export class AppStore {
     return this.getSessionPayload(userId);
   }
 
-  async resolveCategory(householdId: number, name: string) {
-    const normalized = normalizeItemName(name);
-    const learned = await this.db.query<{ categorykey: string }>(
-      "SELECT category_key AS categoryKey FROM category_rules WHERE household_id = $1 AND normalized_name = $2",
-      [householdId, normalized],
-    );
-    return learned.rows[0]?.categorykey ?? inferDefaultCategory(name);
+  async resolveCategory(_householdId: number, name: string) {
+    return inferDefaultCategory(name);
   }
 
-  async addItem(userId: number, householdId: number, name: string, note?: string) {
+  async addItem(userId: number, householdId: number, name: string) {
     await this.ensureMembership(userId, householdId);
     const listResult = await this.db.query<{ id: number }>(
       "SELECT id FROM shopping_lists WHERE household_id = $1 ORDER BY id LIMIT 1",
@@ -334,32 +336,147 @@ export class AppStore {
     if (!listId) {
       throw new Error("List not found");
     }
-    return this.addListItem(userId, listId, name, note);
+    return this.addListItem(userId, listId, name);
   }
 
-  async addListItem(userId: number, listId: number, name: string, note?: string) {
+  async addListItem(userId: number, listId: number, name: string) {
     const list = await this.ensureListAccess(userId, listId);
     const timestamp = now();
     const normalized = normalizeItemName(name);
+    const existingActive = await this.db.query<{ id: number }>(
+      "SELECT id FROM items WHERE list_id = $1 AND normalized_name = $2 AND status = 'active' ORDER BY id LIMIT 1",
+      [listId, normalized],
+    );
+    if (existingActive.rows[0]) {
+      await this.recordItemHistory(userId, list.householdId, name, timestamp);
+      return existingActive.rows[0].id;
+    }
+
     const categoryKey = await this.resolveCategory(list.householdId, name);
     const result = await this.db.query<{ id: number }>(
       `
-        INSERT INTO items (household_id, list_id, name, normalized_name, note, category_key, status, created_at, updated_at, completed_at)
-        VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, NULL)
+        INSERT INTO items (household_id, list_id, name, normalized_name, category_key, status, created_at, updated_at, completed_at)
+        VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, NULL)
         RETURNING id
       `,
-      [list.householdId, listId, name.trim(), normalized, note?.trim() || null, categoryKey, timestamp, timestamp],
+      [list.householdId, listId, name.trim(), normalized, categoryKey, timestamp, timestamp],
     );
+    await this.recordItemHistory(userId, list.householdId, name, timestamp);
     return result.rows[0].id;
+  }
+
+  async recordItemHistory(userId: number, householdId: number, name: string, timestamp = now()) {
+    const displayName = name.trim();
+    const normalized = normalizeItemName(displayName);
+    if (!normalized) {
+      return;
+    }
+
+    await this.db.query(
+      `
+        INSERT INTO user_item_history (user_id, normalized_name, display_name, use_count, last_used_at)
+        VALUES ($1, $2, $3, 1, $4)
+        ON CONFLICT (user_id, normalized_name)
+        DO UPDATE SET display_name = EXCLUDED.display_name,
+                      use_count = user_item_history.use_count + 1,
+                      last_used_at = EXCLUDED.last_used_at
+      `,
+      [userId, normalized, displayName, timestamp],
+    );
+    await this.db.query(
+      `
+        INSERT INTO household_item_history (household_id, normalized_name, display_name, use_count, last_used_at)
+        VALUES ($1, $2, $3, 1, $4)
+        ON CONFLICT (household_id, normalized_name)
+        DO UPDATE SET display_name = EXCLUDED.display_name,
+                      use_count = household_item_history.use_count + 1,
+                      last_used_at = EXCLUDED.last_used_at
+      `,
+      [householdId, normalized, displayName, timestamp],
+    );
+  }
+
+  async getItemSuggestions(userId: number, listId: number, query: string): Promise<ItemSuggestion[]> {
+    const list = await this.ensureListAccess(userId, listId);
+    const normalizedQuery = normalizeItemName(query);
+    const pattern = `${normalizedQuery}%`;
+    const scored = new Map<string, ItemSuggestion & { score: number }>();
+
+    const addSuggestion = (suggestion: ItemSuggestion, useCount: number, lastUsedAt: string | null) => {
+      const startsWithQuery = normalizedQuery ? suggestion.normalizedName.startsWith(normalizedQuery) : true;
+      const exactQuery = normalizedQuery ? suggestion.normalizedName === normalizedQuery : false;
+      const sourceScore = suggestion.source === "user" ? 300 : suggestion.source === "household" ? 200 : 100;
+      const recencyScore = lastUsedAt ? Math.max(0, Date.parse(lastUsedAt) / 100000000000) : 0;
+      const score = sourceScore + useCount * 8 + recencyScore + (startsWithQuery ? 80 : 0) + (exactQuery ? 500 : 0);
+      const existing = scored.get(suggestion.normalizedName);
+      if (!existing || score > existing.score) {
+        scored.set(suggestion.normalizedName, { ...suggestion, score });
+      }
+    };
+
+    const userHistory = await this.db.query<HistoryRecord>(
+      `
+        SELECT normalized_name AS normalizedName,
+               display_name AS displayName,
+               use_count AS useCount,
+               last_used_at AS lastUsedAt
+        FROM user_item_history
+        WHERE user_id = $1
+          AND ($2 = '' OR normalized_name LIKE $3)
+        ORDER BY use_count DESC, last_used_at DESC
+        LIMIT 12
+      `,
+      [userId, normalizedQuery, pattern],
+    );
+    for (const row of userHistory.rows) {
+      addSuggestion(
+        { name: row.displayname, normalizedName: row.normalizedname, source: "user" },
+        Number(row.usecount),
+        row.lastusedat,
+      );
+    }
+
+    const householdHistory = await this.db.query<HistoryRecord>(
+      `
+        SELECT normalized_name AS normalizedName,
+               display_name AS displayName,
+               use_count AS useCount,
+               last_used_at AS lastUsedAt
+        FROM household_item_history
+        WHERE household_id = $1
+          AND ($2 = '' OR normalized_name LIKE $3)
+        ORDER BY use_count DESC, last_used_at DESC
+        LIMIT 12
+      `,
+      [list.householdId, normalizedQuery, pattern],
+    );
+    for (const row of householdHistory.rows) {
+      addSuggestion(
+        { name: row.displayname, normalizedName: row.normalizedname, source: "household" },
+        Number(row.usecount),
+        row.lastusedat,
+      );
+    }
+
+    for (const item of ITEM_CATALOG) {
+      if (!normalizedQuery || item.normalizedName.startsWith(normalizedQuery)) {
+        addSuggestion({ name: item.name, normalizedName: item.normalizedName, source: "catalog" }, 1, null);
+      }
+    }
+
+    return [...scored.values()]
+      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+      .slice(0, 8)
+      .map(({ score: _score, ...suggestion }) => suggestion);
   }
 
   async updateItem(
     userId: number,
     itemId: number,
-    patch: { name?: string; note?: string | null; categoryKey?: string; status?: "active" | "completed" },
+    patch: { name?: string; status?: "active" | "completed" },
   ) {
     const itemResult = await this.db.query<ItemRecord>(
-      "SELECT id, list_id AS listId, household_id AS householdId, name, note, status, completed_at AS completedAt FROM items WHERE id = $1",
+      "SELECT id, list_id AS listId, household_id AS householdId, name, status, completed_at AS completedAt FROM items WHERE id = $1",
       [itemId],
     );
     const item = itemResult.rows[0];
@@ -370,37 +487,23 @@ export class AppStore {
 
     const nextName = patch.name?.trim() || item.name;
     const nextNormalized = normalizeItemName(nextName);
-    const nextCategory = patch.categoryKey ?? (await this.resolveCategory(item.householdid, nextName));
+    const nextCategory = await this.resolveCategory(item.householdid, nextName);
     const nextStatus = patch.status ?? item.status;
     const completedAt = nextStatus === "completed" ? item.completedat ?? now() : null;
-    const note = patch.note === undefined ? item.note : patch.note?.trim() || null;
 
     await this.db.query(
       `
         UPDATE items
         SET name = $1,
             normalized_name = $2,
-            note = $3,
-            category_key = $4,
-            status = $5,
-            updated_at = $6,
-            completed_at = $7
-        WHERE id = $8
+            category_key = $3,
+            status = $4,
+            updated_at = $5,
+            completed_at = $6
+        WHERE id = $7
       `,
-      [nextName, nextNormalized, note, nextCategory, nextStatus, now(), completedAt, itemId],
+      [nextName, nextNormalized, nextCategory, nextStatus, now(), completedAt, itemId],
     );
-
-    if (patch.categoryKey) {
-      await this.db.query(
-        `
-          INSERT INTO category_rules (household_id, normalized_name, category_key, updated_at)
-          VALUES ($1, $2, $3, $4)
-          ON CONFLICT (household_id, normalized_name)
-          DO UPDATE SET category_key = EXCLUDED.category_key, updated_at = EXCLUDED.updated_at
-        `,
-        [item.householdid, nextNormalized, patch.categoryKey, now()],
-      );
-    }
   }
 
   async getItemHouseholdId(itemId: number) {
@@ -545,7 +648,6 @@ export class AppStore {
       householdid: number;
       name: string;
       normalizedname: string;
-      note: string | null;
       categorykey: string;
       categorylabel: string;
       status: "active" | "completed";
@@ -559,7 +661,6 @@ export class AppStore {
                items.household_id AS householdId,
                items.name,
                items.normalized_name AS normalizedName,
-               items.note,
                items.category_key AS categoryKey,
                household_categories.label AS categoryLabel,
                items.status,
@@ -591,7 +692,6 @@ export class AppStore {
       householdId: item.householdid,
       name: item.name,
       normalizedName: item.normalizedname,
-      note: item.note,
       categoryKey: item.categorykey,
       categoryLabel: item.categorylabel,
       status: item.status,
@@ -641,7 +741,6 @@ export class AppStore {
       householdid: number;
       name: string;
       normalizedname: string;
-      note: string | null;
       categorykey: string;
       categorylabel: string;
       status: "active" | "completed";
@@ -655,7 +754,6 @@ export class AppStore {
                items.household_id AS householdId,
                items.name,
                items.normalized_name AS normalizedName,
-               items.note,
                items.category_key AS categoryKey,
                household_categories.label AS categoryLabel,
                items.status,
@@ -677,7 +775,6 @@ export class AppStore {
       householdId: item.householdid,
       name: item.name,
       normalizedName: item.normalizedname,
-      note: item.note,
       categoryKey: item.categorykey,
       categoryLabel: item.categorylabel,
       status: item.status,

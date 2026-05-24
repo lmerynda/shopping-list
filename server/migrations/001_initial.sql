@@ -43,20 +43,11 @@ CREATE TABLE IF NOT EXISTS household_categories (
   PRIMARY KEY (household_id, category_key)
 );
 
-CREATE TABLE IF NOT EXISTS category_rules (
-  household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
-  normalized_name TEXT NOT NULL,
-  category_key TEXT NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (household_id, normalized_name)
-);
-
 CREATE TABLE IF NOT EXISTS items (
   id SERIAL PRIMARY KEY,
   household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   normalized_name TEXT NOT NULL,
-  note TEXT,
   category_key TEXT NOT NULL,
   status TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,

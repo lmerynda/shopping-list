@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { HouseholdState, SessionPayload, ShoppingListState, ShoppingListSummary } from "./lib/types";
+import type { HouseholdState, ItemSuggestion, SessionPayload, ShoppingListState, ShoppingListSummary } from "./lib/types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:4000";
 const WS_URL = API_URL.startsWith("https://")
@@ -591,8 +591,28 @@ function ListDetail(props: {
   onRefresh: () => void;
 }) {
   const [itemName, setItemName] = useState("");
-  const [itemNote, setItemNote] = useState("");
+  const [suggestions, setSuggestions] = useState<ItemSuggestion[]>([]);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [adding, setAdding] = useState(false);
+
+  useEffect(() => {
+    if (!props.state) {
+      setSuggestions([]);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      api<ItemSuggestion[]>(
+        `/api/lists/${props.state!.list.id}/item-suggestions?q=${encodeURIComponent(itemName)}`,
+        undefined,
+        props.token,
+      )
+        .then(setSuggestions)
+        .catch(() => setSuggestions([]));
+    }, 120);
+
+    return () => window.clearTimeout(timeout);
+  }, [itemName, props.state, props.token]);
 
   if (!props.state) {
     return (
@@ -601,6 +621,23 @@ function ListDetail(props: {
       </section>
     );
   }
+
+  const addItem = async (name: string) => {
+    const nextName = name.trim();
+    if (!nextName || adding) return;
+    setAdding(true);
+    try {
+      await api(`/api/lists/${props.state!.list.id}/items`, {
+        method: "POST",
+        body: JSON.stringify({ name: nextName }),
+      }, props.token);
+      setItemName("");
+      setSuggestions([]);
+      props.onRefresh();
+    } finally {
+      setAdding(false);
+    }
+  };
 
   return (
     <div className="stack">
@@ -615,25 +652,42 @@ function ListDetail(props: {
         <span className="panel-badge">{props.state.activeItems.length} active</span>
       </section>
 
-      <section className="panel composer-panel">
-        <div className="composer-grid">
-          <input value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Milk" />
-          <input value={itemNote} onChange={(event) => setItemNote(event.target.value)} placeholder="Optional note" />
+      <section className="add-panel">
+        <form
+          className="add-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void addItem(itemName);
+          }}
+        >
+          <input
+            value={itemName}
+            onChange={(event) => setItemName(event.target.value)}
+            placeholder="Milk"
+            aria-label="Add item"
+            autoComplete="off"
+          />
           <button
-            onClick={async () => {
-              if (!itemName.trim()) return;
-              await api(`/api/lists/${props.state!.list.id}/items`, {
-                method: "POST",
-                body: JSON.stringify({ name: itemName, note: itemNote }),
-              }, props.token);
-              setItemName("");
-              setItemNote("");
-              props.onRefresh();
-            }}
+            type="submit"
+            disabled={adding || !itemName.trim()}
           >
             Add item
           </button>
-        </div>
+        </form>
+        {suggestions.length > 0 ? (
+          <div className="suggestion-strip" aria-label="Item suggestions">
+            {suggestions.map((suggestion) => (
+              <button
+                key={`${suggestion.source}-${suggestion.normalizedName}`}
+                type="button"
+                className="suggestion-chip"
+                onClick={() => void addItem(suggestion.name)}
+              >
+                {suggestion.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="panel list-panel">
@@ -646,15 +700,11 @@ function ListDetail(props: {
         <ItemList
           items={props.state.activeItems}
           actionLabel="Mark bought"
+          actionIcon="✓"
           onAction={async (itemId) => {
             await api(`/api/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) }, props.token);
             props.onRefresh();
           }}
-          onRecategorize={async (itemId, categoryKey) => {
-            await api(`/api/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ categoryKey }) }, props.token);
-            props.onRefresh();
-          }}
-          categories={props.state.categories}
         />
       </section>
 
@@ -667,15 +717,11 @@ function ListDetail(props: {
           <ItemList
             items={props.state.completedItems}
             actionLabel="Re-add"
+            actionIcon="+"
             onAction={async (itemId) => {
               await api(`/api/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ status: "active" }) }, props.token);
               props.onRefresh();
             }}
-            onRecategorize={async (itemId, categoryKey) => {
-              await api(`/api/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ categoryKey }) }, props.token);
-              props.onRefresh();
-            }}
-            categories={props.state.categories}
           />
         ) : null}
       </section>
@@ -926,10 +972,9 @@ function SettingsView(props: {
 
 function ItemList(props: {
   items: ShoppingListState["activeItems"];
-  categories: ShoppingListState["categories"];
   actionLabel: string;
+  actionIcon: string;
   onAction: (itemId: number) => Promise<void>;
-  onRecategorize: (itemId: number, categoryKey: string) => Promise<void>;
 }) {
   if (props.items.length === 0) {
     return <p className="empty-state">Nothing here yet.</p>;
@@ -939,25 +984,38 @@ function ItemList(props: {
     <ul className="item-list">
       {props.items.map((item) => (
         <li className="item-row" key={item.id}>
-          <div className="item-copy">
-            <div className="item-title-row">
-              <strong>{item.name}</strong>
-              <span className="category-pill">{item.categoryLabel}</span>
-            </div>
-            {item.note ? <p>{item.note}</p> : null}
-          </div>
-          <div className="item-actions">
-            <select value={item.categoryKey} onChange={(event) => props.onRecategorize(item.id, event.target.value)}>
-              {props.categories.map((category) => (
-                <option key={category.key} value={category.key}>
-                  {category.label}
-                </option>
-              ))}
-            </select>
-            <button onClick={() => props.onAction(item.id)}>{props.actionLabel}</button>
-          </div>
+          <span className="item-category-icon" aria-label={item.categoryLabel} title={item.categoryLabel}>
+            {getCategoryIcon(item.categoryKey)}
+          </span>
+          <strong className="item-name">{item.name}</strong>
+          <button className="item-check-button" onClick={() => props.onAction(item.id)} aria-label={props.actionLabel}>
+            <span aria-hidden="true">{props.actionIcon}</span>
+          </button>
         </li>
       ))}
     </ul>
   );
+}
+
+function getCategoryIcon(categoryKey: string) {
+  switch (categoryKey) {
+    case "produce":
+      return "🥬";
+    case "dairy":
+      return "🥛";
+    case "meat":
+      return "🥩";
+    case "pantry":
+      return "🥫";
+    case "frozen":
+      return "❄";
+    case "bakery":
+      return "🍞";
+    case "household":
+      return "🧼";
+    case "pharmacy":
+      return "+";
+    default:
+      return "•";
+  }
 }

@@ -62,18 +62,52 @@ describe("AppStore", () => {
     expect(hardwareState.activeItems[0]?.name).toBe("Trash bags");
   });
 
-  test("learns category corrections for future items", async () => {
-    const firstCode = await store.requestMagicCode("owner@example.com", "Owner");
-    const session = await store.verifyMagicCode("owner@example.com", firstCode);
-    const household = (await store.createHousehold(session!.session.user.id, "Home")).households[0];
+  test("records item history and returns merged suggestions", async () => {
+    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
+    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
+    await store.createHousehold(ownerSession!.session.user.id, "Home");
+    const groceries = (await store.getListSummaries(ownerSession!.session.user.id))[0];
 
-    const firstItemId = await store.addItem(session!.session.user.id, household.id, "Soap refill");
-    await store.updateItem(session!.session.user.id, firstItemId, { categoryKey: "pharmacy" });
-    const nextItemId = await store.addItem(session!.session.user.id, household.id, "Soap refill");
-    const state = await store.getHouseholdState(session!.session.user.id, household.id);
-    const nextItem = state.activeItems.find((item) => item.id === nextItemId);
+    await store.addListItem(ownerSession!.session.user.id, groceries.id, "Milk");
+    await store.addListItem(ownerSession!.session.user.id, groceries.id, "Maple syrup");
 
-    expect(nextItem?.categoryKey).toBe("pharmacy");
+    const suggestions = await store.getItemSuggestions(ownerSession!.session.user.id, groceries.id, "m");
+
+    expect(suggestions.map((suggestion) => suggestion.name)).toContain("Milk");
+    expect(suggestions.map((suggestion) => suggestion.name)).toContain("Maple syrup");
+
+    const catalogSuggestions = await store.getItemSuggestions(ownerSession!.session.user.id, groceries.id, "br");
+    expect(catalogSuggestions).toContainEqual({
+      name: "Bread",
+      normalizedName: "bread",
+      source: "catalog",
+    });
+  });
+
+  test("does not duplicate an already active list item", async () => {
+    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
+    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
+    await store.createHousehold(ownerSession!.session.user.id, "Home");
+    const groceries = (await store.getListSummaries(ownerSession!.session.user.id))[0];
+
+    await store.addListItem(ownerSession!.session.user.id, groceries.id, "Milk");
+    await store.addListItem(ownerSession!.session.user.id, groceries.id, " milk ");
+
+    const state = await store.getListState(ownerSession!.session.user.id, groceries.id);
+    expect(state.activeItems).toHaveLength(1);
+    expect(state.activeItems[0].name).toBe("Milk");
+  });
+
+  test("requires list access for suggestions", async () => {
+    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
+    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
+    await store.createHousehold(ownerSession!.session.user.id, "Home");
+    const groceries = (await store.getListSummaries(ownerSession!.session.user.id))[0];
+
+    const otherCode = await store.requestMagicCode("other@example.com", "Other");
+    const otherSession = await store.verifyMagicCode("other@example.com", otherCode);
+
+    await expect(store.getItemSuggestions(otherSession!.session.user.id, groceries.id, "")).rejects.toThrow(/forbidden/i);
   });
 
   test("requires invite email to match current user", async () => {
@@ -130,17 +164,4 @@ describe("AppStore", () => {
     });
   });
 
-  test("keeps completed items completed when only category changes", async () => {
-    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
-    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
-    const household = (await store.createHousehold(ownerSession!.session.user.id, "Home")).households[0];
-    const itemId = await store.addItem(ownerSession!.session.user.id, household.id, "Milk");
-
-    await store.updateItem(ownerSession!.session.user.id, itemId, { status: "completed" });
-    await store.updateItem(ownerSession!.session.user.id, itemId, { categoryKey: "pharmacy" });
-
-    const state = await store.getHouseholdState(ownerSession!.session.user.id, household.id);
-    expect(state.activeItems).toHaveLength(0);
-    expect(state.completedItems[0]?.categoryKey).toBe("pharmacy");
-  });
 });

@@ -9,6 +9,8 @@ describe("categories", () => {
   test("infers household category from keywords", () => {
     expect(inferDefaultCategory("Shampoo")).toBe("household");
     expect(inferDefaultCategory("Milk")).toBe("dairy");
+    expect(inferDefaultCategory("Bananas")).toBe("produce");
+    expect(inferDefaultCategory("Blueberries")).toBe("produce");
   });
 
   test("sorts by category and then time", () => {

@@ -240,6 +240,15 @@ app.get("/api/lists/:listId", requireUser, async (req, res) => {
   }
 });
 
+app.get("/api/lists/:listId/item-suggestions", requireUser, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  try {
+    res.json(await store.getItemSuggestions(userId, Number(req.params.listId), String(req.query.q ?? "")));
+  } catch {
+    res.status(403).json({ error: "Forbidden" });
+  }
+});
+
 app.get("/api/households/:householdId", requireUser, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   try {
@@ -340,7 +349,7 @@ app.post("/api/households/:householdId/items", requireUser, async (req, res) => 
   const userId = (req as express.Request & { userId: number }).userId;
   const householdId = Number(req.params.householdId);
   try {
-    const itemId = await store.addItem(userId, householdId, parsed.data.name, parsed.data.note);
+    const itemId = await store.addItem(userId, householdId, parsed.data.name);
     broadcastHousehold(householdId);
     res.status(201).json({ id: itemId });
   } catch {
@@ -357,7 +366,7 @@ app.post("/api/lists/:listId/items", requireUser, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   const listId = Number(req.params.listId);
   try {
-    const itemId = await store.addListItem(userId, listId, parsed.data.name, parsed.data.note);
+    const itemId = await store.addListItem(userId, listId, parsed.data.name);
     const householdId = await store.getListHouseholdId(listId);
     if (householdId) {
       broadcastList(listId, householdId);

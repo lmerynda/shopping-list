@@ -35,13 +35,18 @@ export type ShoppingItem = {
   householdId: number;
   name: string;
   normalizedName: string;
-  note: string | null;
   categoryKey: string;
   categoryLabel: string;
   status: "active" | "completed";
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+};
+
+export type ItemSuggestion = {
+  name: string;
+  normalizedName: string;
+  source: "catalog" | "user" | "household";
 };
 
 export type Invite = {
