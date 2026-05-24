@@ -2,15 +2,13 @@ import express from "express";
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import { config } from "./config.js";
-import { isMailEnabled, sendInviteEmail, sendLoginCodeEmail } from "./mailer.js";
+import { isMailEnabled, sendLoginCodeEmail } from "./mailer.js";
 import { AppStore } from "./store.js";
 import {
-  acceptInviteSchema,
   addItemSchema,
-  createHouseholdSchema,
   createListSchema,
-  inviteSchema,
   requestCodeSchema,
+  shareSettingsSchema,
   updateItemSchema,
   verifyCodeSchema,
 } from "./schema.js";
@@ -35,7 +33,7 @@ app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", config.clientOrigin);
   }
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   if (req.method === "OPTIONS") {
     if (!isAllowedOrigin) {
       res.status(403).end();
@@ -70,24 +68,13 @@ function requireUser(req: express.Request, res: express.Response, next: express.
   next();
 }
 
-type Client = { ws: import("ws").WebSocket; userId: number; householdId?: number; listId?: number };
+type Client = { ws: import("ws").WebSocket; userId: number; listId: number };
 const clients = new Set<Client>();
 
-function broadcastHousehold(householdId: number) {
-  for (const client of clients) {
-    if (client.householdId === householdId && client.ws.readyState === client.ws.OPEN) {
-      client.ws.send(JSON.stringify({ type: "household-updated", householdId }));
-    }
-  }
-}
-
-function broadcastList(listId: number, householdId: number) {
+function broadcastList(listId: number) {
   for (const client of clients) {
     if (client.listId === listId && client.ws.readyState === client.ws.OPEN) {
       client.ws.send(JSON.stringify({ type: "list-updated", listId }));
-    }
-    if (client.householdId === householdId && client.ws.readyState === client.ws.OPEN) {
-      client.ws.send(JSON.stringify({ type: "household-updated", householdId }));
     }
   }
 }
@@ -95,27 +82,22 @@ function broadcastList(listId: number, householdId: number) {
 wss.on("connection", async (ws, req) => {
   const url = new URL(req.url ?? "", "http://localhost");
   const token = url.searchParams.get("token") ?? undefined;
-  const householdId = Number(url.searchParams.get("householdId"));
   const listId = Number(url.searchParams.get("listId"));
   const userId = store.getUserIdFromToken(token);
 
-  if (!userId || (!householdId && !listId)) {
+  if (!userId || !listId) {
     ws.close();
     return;
   }
 
   try {
-    if (listId) {
-      await store.ensureListAccess(userId, listId);
-    } else {
-      await store.ensureMembership(userId, householdId);
-    }
+    await store.ensureListAccess(userId, listId);
   } catch {
     ws.close();
     return;
   }
 
-  const client = { ws, userId, householdId: householdId || undefined, listId: listId || undefined };
+  const client = { ws, userId, listId };
   clients.add(client);
   ws.on("close", () => {
     clients.delete(client);
@@ -131,11 +113,13 @@ app.post("/api/test/reset", (_req, res) => {
     res.status(404).end();
     return;
   }
-  void store.resetForTests().then(() => {
-    res.status(204).end();
-  }).catch(() => {
-    res.status(500).json({ error: "Unable to reset test state" });
-  });
+  void store.resetForTests()
+    .then(() => {
+      res.status(204).end();
+    })
+    .catch(() => {
+      res.status(500).json({ error: "Unable to reset test state" });
+    });
 });
 
 app.post("/api/auth/request-code", async (req, res) => {
@@ -148,10 +132,7 @@ app.post("/api/auth/request-code", async (req, res) => {
   const code = await store.requestMagicCode(parsed.data.email, parsed.data.displayName);
   let emailed = false;
   try {
-    emailed = await sendLoginCodeEmail({
-      email: parsed.data.email,
-      code,
-    });
+    emailed = await sendLoginCodeEmail({ email: parsed.data.email, code });
   } catch (error) {
     console.error("Failed to send login code email", error);
     res.status(502).json({ error: "Code created, but email delivery failed" });
@@ -186,27 +167,24 @@ app.post("/api/auth/verify", async (req, res) => {
   res.json(session);
 });
 
-app.get("/api/invites/:code", async (req, res) => {
-  try {
-    res.json(await store.getInvitePreview(req.params.code));
-  } catch {
-    res.status(404).json({ error: "Invite not found" });
-  }
-});
-
 app.get("/api/session", requireUser, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   res.json(await store.getSessionPayload(userId));
 });
 
-app.post("/api/households", requireUser, async (req, res) => {
-  const parsed = createHouseholdSchema.safeParse(req.body);
+app.get("/api/share-settings", requireUser, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  res.json({ emails: await store.getDefaultShareEmails(userId) });
+});
+
+app.put("/api/share-settings", requireUser, async (req, res) => {
+  const parsed = shareSettingsSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   const userId = (req as express.Request & { userId: number }).userId;
-  res.status(201).json(await store.createHousehold(userId, parsed.data.name));
+  res.json(await store.updateDefaultShareEmails(userId, parsed.data.emails));
 });
 
 app.get("/api/lists", requireUser, async (req, res) => {
@@ -214,21 +192,15 @@ app.get("/api/lists", requireUser, async (req, res) => {
   res.json(await store.getListSummaries(userId));
 });
 
-app.post("/api/households/:householdId/lists", requireUser, async (req, res) => {
+app.post("/api/lists", requireUser, async (req, res) => {
   const parsed = createListSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   const userId = (req as express.Request & { userId: number }).userId;
-  const householdId = Number(req.params.householdId);
-  try {
-    const id = await store.createList(userId, householdId, parsed.data.name);
-    broadcastHousehold(householdId);
-    res.status(201).json({ id });
-  } catch {
-    res.status(403).json({ error: "Forbidden" });
-  }
+  const id = await store.createList(userId, parsed.data.name);
+  res.status(201).json({ id });
 });
 
 app.get("/api/lists/:listId", requireUser, async (req, res) => {
@@ -240,118 +212,21 @@ app.get("/api/lists/:listId", requireUser, async (req, res) => {
   }
 });
 
+app.delete("/api/lists/:listId", requireUser, async (req, res) => {
+  const userId = (req as express.Request & { userId: number }).userId;
+  try {
+    await store.deleteList(userId, Number(req.params.listId));
+    broadcastList(Number(req.params.listId));
+    res.status(204).end();
+  } catch {
+    res.status(403).json({ error: "Forbidden" });
+  }
+});
+
 app.get("/api/lists/:listId/item-suggestions", requireUser, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   try {
     res.json(await store.getItemSuggestions(userId, Number(req.params.listId), String(req.query.q ?? "")));
-  } catch {
-    res.status(403).json({ error: "Forbidden" });
-  }
-});
-
-app.get("/api/households/:householdId", requireUser, async (req, res) => {
-  const userId = (req as express.Request & { userId: number }).userId;
-  try {
-    res.json(await store.getHouseholdState(userId, Number(req.params.householdId)));
-  } catch {
-    res.status(403).json({ error: "Forbidden" });
-  }
-});
-
-app.post("/api/households/:householdId/invites", requireUser, async (req, res) => {
-  const parsed = inviteSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  const userId = (req as express.Request & { userId: number }).userId;
-  const householdId = Number(req.params.householdId);
-  let household: { id: number; name: string } | null = null;
-  let code: string;
-  try {
-    household = await store.getHousehold(userId, householdId);
-    if (!household) {
-      res.status(404).json({ error: "Household not found" });
-      return;
-    }
-    code = await store.createInvite(userId, householdId, parsed.data.email);
-  } catch {
-    res.status(403).json({ error: "Forbidden" });
-    return;
-  }
-
-  let emailed = false;
-  try {
-    emailed = await sendInviteEmail({
-      email: parsed.data.email,
-      code,
-      householdName: household.name,
-    });
-  } catch (error) {
-    console.error("Failed to send invite email", error);
-    res.status(502).json({ error: "Invite created, but email delivery failed" });
-    return;
-  }
-
-  broadcastHousehold(householdId);
-  res.status(201).json({
-    ok: true,
-    emailed,
-    mailConfigured: isMailEnabled(),
-    devCode: process.env.NODE_ENV !== "production" ? code : undefined,
-  });
-});
-
-app.post("/api/invites/accept", requireUser, async (req, res) => {
-  const parsed = acceptInviteSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  const userId = (req as express.Request & { userId: number }).userId;
-  try {
-    const session = await store.acceptInvite(userId, parsed.data.code);
-    res.json(session);
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to accept invite" });
-  }
-});
-
-app.delete("/api/invites/:inviteId", requireUser, async (req, res) => {
-  const userId = (req as express.Request & { userId: number }).userId;
-  try {
-    const householdId = await store.deletePendingInvite(userId, Number(req.params.inviteId));
-    broadcastHousehold(householdId);
-    res.status(204).end();
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to remove invite" });
-  }
-});
-
-app.delete("/api/households/:householdId/members/me", requireUser, async (req, res) => {
-  const userId = (req as express.Request & { userId: number }).userId;
-  const householdId = Number(req.params.householdId);
-  try {
-    const session = await store.leaveHousehold(userId, householdId);
-    broadcastHousehold(householdId);
-    res.json(session);
-  } catch {
-    res.status(403).json({ error: "Forbidden" });
-  }
-});
-
-app.post("/api/households/:householdId/items", requireUser, async (req, res) => {
-  const parsed = addItemSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  const userId = (req as express.Request & { userId: number }).userId;
-  const householdId = Number(req.params.householdId);
-  try {
-    const itemId = await store.addItem(userId, householdId, parsed.data.name);
-    broadcastHousehold(householdId);
-    res.status(201).json({ id: itemId });
   } catch {
     res.status(403).json({ error: "Forbidden" });
   }
@@ -367,10 +242,7 @@ app.post("/api/lists/:listId/items", requireUser, async (req, res) => {
   const listId = Number(req.params.listId);
   try {
     const itemId = await store.addListItem(userId, listId, parsed.data.name);
-    const householdId = await store.getListHouseholdId(listId);
-    if (householdId) {
-      broadcastList(listId, householdId);
-    }
+    broadcastList(listId);
     res.status(201).json({ id: itemId });
   } catch {
     res.status(403).json({ error: "Forbidden" });
@@ -394,11 +266,8 @@ app.patch("/api/items/:itemId", requireUser, async (req, res) => {
 
   try {
     const listId = await store.getItemListId(Number(req.params.itemId));
-    const householdId = await store.getItemHouseholdId(Number(req.params.itemId));
-    if (listId && householdId) {
-      broadcastList(listId, householdId);
-    } else if (householdId) {
-      broadcastHousehold(householdId);
+    if (listId) {
+      broadcastList(listId);
     }
   } catch {
     // best effort

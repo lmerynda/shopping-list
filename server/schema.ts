@@ -10,20 +10,12 @@ export const verifyCodeSchema = z.object({
   code: z.string().trim().min(6).max(12),
 });
 
-export const createHouseholdSchema = z.object({
-  name: z.string().trim().min(1).max(80),
-});
-
 export const createListSchema = z.object({
   name: z.string().trim().min(1).max(80),
 });
 
-export const inviteSchema = z.object({
-  email: z.string().email(),
-});
-
-export const acceptInviteSchema = z.object({
-  code: z.string().trim().min(8).max(24),
+export const shareSettingsSchema = z.object({
+  emails: z.array(z.string().email()).max(20),
 });
 
 export const addItemSchema = z.object({

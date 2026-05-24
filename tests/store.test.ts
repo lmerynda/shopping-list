@@ -9,7 +9,6 @@ describe("AppStore", () => {
   beforeEach(async () => {
     const db = newDb();
     const adapter = db.adapters.createPg();
-    // pg-mem exposes a pg-compatible Pool constructor.
     const PgMemPool = adapter.Pool;
     pool = new PgMemPool();
     store = new AppStore({ db: pool as never });
@@ -21,13 +20,19 @@ describe("AppStore", () => {
     await pool.end();
   });
 
-  test("creates households and grants membership", async () => {
+  test("creates a default list on sign in", async () => {
     const code = await store.requestMagicCode("owner@example.com", "Owner");
     const session = await store.verifyMagicCode("owner@example.com", code);
-    const next = await store.createHousehold(session!.session.user.id, "Home");
+    const summaries = await store.getListSummaries(session!.session.user.id);
 
-    expect(next.households).toHaveLength(1);
-    expect(next.households[0].name).toBe("Home");
+    expect(summaries).toMatchObject([
+      {
+        name: "Groceries",
+        activeCount: 0,
+        completedCount: 0,
+        shared: false,
+      },
+    ]);
   });
 
   test("extends valid sessions when they are used", async () => {
@@ -51,29 +56,11 @@ describe("AppStore", () => {
     expect(store.sessions.has(token)).toBe(false);
   });
 
-  test("creates a default list and returns list summaries", async () => {
-    const code = await store.requestMagicCode("owner@example.com", "Owner");
-    const session = await store.verifyMagicCode("owner@example.com", code);
-    const household = (await store.createHousehold(session!.session.user.id, "Home")).households[0];
-    const summaries = await store.getListSummaries(session!.session.user.id);
-
-    expect(summaries).toMatchObject([
-      {
-        householdId: household.id,
-        householdName: "Home",
-        name: "Groceries",
-        activeCount: 0,
-        completedCount: 0,
-      },
-    ]);
-  });
-
   test("adds items to a specific list", async () => {
     const code = await store.requestMagicCode("owner@example.com", "Owner");
     const session = await store.verifyMagicCode("owner@example.com", code);
-    await store.createHousehold(session!.session.user.id, "Home");
     const groceries = (await store.getListSummaries(session!.session.user.id))[0];
-    const hardwareId = await store.createList(session!.session.user.id, groceries.householdId, "Hardware");
+    const hardwareId = await store.createList(session!.session.user.id, "Hardware");
 
     await store.addListItem(session!.session.user.id, hardwareId, "Trash bags");
 
@@ -83,10 +70,43 @@ describe("AppStore", () => {
     expect(hardwareState.activeItems[0]?.name).toBe("Trash bags");
   });
 
+  test("lets owners delete lists", async () => {
+    const code = await store.requestMagicCode("owner@example.com", "Owner");
+    const session = await store.verifyMagicCode("owner@example.com", code);
+    const groceries = (await store.getListSummaries(session!.session.user.id))[0];
+
+    await store.deleteList(session!.session.user.id, groceries.id);
+    const nextCode = await store.requestMagicCode("owner@example.com", "Owner");
+    await store.verifyMagicCode("owner@example.com", nextCode);
+
+    expect(await store.getListSummaries(session!.session.user.id)).toHaveLength(0);
+  });
+
+  test("shares new lists with default share emails", async () => {
+    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
+    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
+    await store.updateDefaultShareEmails(ownerSession!.session.user.id, ["wife@example.com"]);
+    const sharedListId = await store.createList(ownerSession!.session.user.id, "Hardware");
+
+    const memberCode = await store.requestMagicCode("wife@example.com", "Wife");
+    const memberSession = await store.verifyMagicCode("wife@example.com", memberCode);
+    const summaries = await store.getListSummaries(memberSession!.session.user.id);
+
+    expect(summaries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: sharedListId,
+          name: "Hardware",
+          shared: true,
+          ownerName: "Owner",
+        }),
+      ]),
+    );
+  });
+
   test("records item history and returns merged suggestions", async () => {
     const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
     const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
-    await store.createHousehold(ownerSession!.session.user.id, "Home");
     const groceries = (await store.getListSummaries(ownerSession!.session.user.id))[0];
 
     await store.addListItem(ownerSession!.session.user.id, groceries.id, "Milk");
@@ -108,7 +128,6 @@ describe("AppStore", () => {
   test("does not duplicate an already active list item", async () => {
     const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
     const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
-    await store.createHousehold(ownerSession!.session.user.id, "Home");
     const groceries = (await store.getListSummaries(ownerSession!.session.user.id))[0];
 
     await store.addListItem(ownerSession!.session.user.id, groceries.id, "Milk");
@@ -122,7 +141,6 @@ describe("AppStore", () => {
   test("requires list access for suggestions", async () => {
     const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
     const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
-    await store.createHousehold(ownerSession!.session.user.id, "Home");
     const groceries = (await store.getListSummaries(ownerSession!.session.user.id))[0];
 
     const otherCode = await store.requestMagicCode("other@example.com", "Other");
@@ -130,59 +148,4 @@ describe("AppStore", () => {
 
     await expect(store.getItemSuggestions(otherSession!.session.user.id, groceries.id, "")).rejects.toThrow(/forbidden/i);
   });
-
-  test("requires invite email to match current user", async () => {
-    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
-    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
-    const household = (await store.createHousehold(ownerSession!.session.user.id, "Home")).households[0];
-    const inviteCode = await store.createInvite(ownerSession!.session.user.id, household.id, "wife@example.com");
-
-    const otherCode = await store.requestMagicCode("other@example.com", "Other");
-    const otherSession = await store.verifyMagicCode("other@example.com", otherCode);
-
-    await expect(store.acceptInvite(otherSession!.session.user.id, inviteCode)).rejects.toThrow(/email does not match/i);
-  });
-
-  test("lets a member leave a household", async () => {
-    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
-    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
-    const household = (await store.createHousehold(ownerSession!.session.user.id, "Home")).households[0];
-    const inviteCode = await store.createInvite(ownerSession!.session.user.id, household.id, "wife@example.com");
-
-    const memberCode = await store.requestMagicCode("wife@example.com", "Wife");
-    const memberSession = await store.verifyMagicCode("wife@example.com", memberCode);
-    await store.acceptInvite(memberSession!.session.user.id, inviteCode);
-
-    const afterLeave = await store.leaveHousehold(memberSession!.session.user.id, household.id);
-
-    expect(afterLeave.households).toHaveLength(0);
-  });
-
-  test("removes pending invites", async () => {
-    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
-    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
-    const household = (await store.createHousehold(ownerSession!.session.user.id, "Home")).households[0];
-    await store.createInvite(ownerSession!.session.user.id, household.id, "wife@example.com");
-
-    const withInvite = await store.getHouseholdState(ownerSession!.session.user.id, household.id);
-    expect(withInvite.invites).toHaveLength(1);
-
-    await store.deletePendingInvite(ownerSession!.session.user.id, withInvite.invites[0].id);
-
-    const withoutInvite = await store.getHouseholdState(ownerSession!.session.user.id, household.id);
-    expect(withoutInvite.invites).toHaveLength(0);
-  });
-
-  test("returns pending invite preview", async () => {
-    const ownerCode = await store.requestMagicCode("owner@example.com", "Owner");
-    const ownerSession = await store.verifyMagicCode("owner@example.com", ownerCode);
-    const household = (await store.createHousehold(ownerSession!.session.user.id, "Home")).households[0];
-    const inviteCode = await store.createInvite(ownerSession!.session.user.id, household.id, "wife@example.com");
-
-    await expect(store.getInvitePreview(inviteCode)).resolves.toEqual({
-      email: "wife@example.com",
-      householdName: "Home",
-    });
-  });
-
 });

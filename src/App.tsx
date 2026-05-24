@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { HouseholdState, ItemSuggestion, SessionPayload, ShoppingListState, ShoppingListSummary } from "./lib/types";
+import type { ItemSuggestion, SessionPayload, ShareSettings, ShoppingListState, ShoppingListSummary } from "./lib/types";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:4000";
 const WS_URL = API_URL.startsWith("https://")
@@ -11,12 +11,6 @@ const THEME_KEY = "shopping-list-theme";
 type AuthStep = "request" | "verify";
 type Theme = "light" | "dark";
 type Route = { name: "home" } | { name: "list"; listId: number } | { name: "settings" };
-type InvitePreview = {
-  email: string;
-  householdName: string;
-};
-
-// test
 
 function getSavedToken() {
   return window.localStorage.getItem(STORAGE_KEY);
@@ -29,10 +23,6 @@ function getInitialTheme(): Theme {
   }
 
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-function getInviteCodeFromUrl() {
-  return new URLSearchParams(window.location.search).get("invite") ?? "";
 }
 
 function parseRoute(): Route {
@@ -85,13 +75,10 @@ export function App() {
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [lists, setLists] = useState<ShoppingListSummary[]>([]);
   const [listState, setListState] = useState<ShoppingListState | null>(null);
-  const [pendingInviteCode, setPendingInviteCode] = useState(() => getInviteCodeFromUrl());
-  const [invitePreview, setInvitePreview] = useState<InvitePreview | null>(null);
-  const [invitePreviewLoaded, setInvitePreviewLoaded] = useState(false);
-  const [inviteBusy, setInviteBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
+  const [autoOpenedOnlyList, setAutoOpenedOnlyList] = useState(false);
 
   useEffect(() => {
     const onHashChange = () => setRoute(parseRoute());
@@ -105,9 +92,8 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (!token) {
-      return;
-    }
+    if (!token) return;
+    setAutoOpenedOnlyList(false);
 
     api<SessionPayload>("/api/session", undefined, token)
       .then((nextSession) => {
@@ -122,9 +108,14 @@ export function App() {
   }, [token]);
 
   useEffect(() => {
-    if (!token || !session) {
-      return;
+    if (route.name === "home" && lists.length === 1 && !autoOpenedOnlyList) {
+      setAutoOpenedOnlyList(true);
+      navigate({ name: "list", listId: lists[0].id });
     }
+  }, [autoOpenedOnlyList, lists, route]);
+
+  useEffect(() => {
+    if (!token || !session) return;
 
     api<ShoppingListSummary[]>("/api/lists", undefined, token)
       .then((nextLists) => {
@@ -152,9 +143,7 @@ export function App() {
   }, [token, route, refreshTick]);
 
   useEffect(() => {
-    if (!token || route.name !== "list") {
-      return;
-    }
+    if (!token || route.name !== "list") return;
 
     const socket = new WebSocket(`${WS_URL}/ws?token=${token}&listId=${route.listId}`);
     socket.addEventListener("message", () => {
@@ -164,58 +153,6 @@ export function App() {
       socket.close();
     };
   }, [token, route]);
-
-  useEffect(() => {
-    if (!pendingInviteCode) {
-      setInvitePreview(null);
-      setInvitePreviewLoaded(false);
-      return;
-    }
-
-    setInvitePreviewLoaded(false);
-    api<InvitePreview>(`/api/invites/${pendingInviteCode}`)
-      .then((preview) => {
-        setInvitePreview(preview);
-        setInvitePreviewLoaded(true);
-        setError(null);
-      })
-      .catch((nextError) => {
-        setInvitePreview(null);
-        setInvitePreviewLoaded(true);
-        setError(nextError.message);
-      });
-  }, [pendingInviteCode]);
-
-  useEffect(() => {
-    if (!token || !session || !pendingInviteCode || !invitePreviewLoaded || inviteBusy) {
-      return;
-    }
-    if (invitePreview && session.user.email !== invitePreview.email) {
-      setError(`This invite is for ${invitePreview.email}. Sign out and use that email to join.`);
-      return;
-    }
-
-    setInviteBusy(true);
-    api<SessionPayload>("/api/invites/accept", {
-      method: "POST",
-      body: JSON.stringify({ code: pendingInviteCode }),
-    }, token)
-      .then((nextSession) => {
-        setSession(nextSession);
-        setPendingInviteCode("");
-        setInvitePreview(null);
-        setInvitePreviewLoaded(false);
-        setError(null);
-        setRefreshTick((tick) => tick + 1);
-        window.history.replaceState(null, "", window.location.pathname + window.location.hash);
-      })
-      .catch((nextError) => {
-        setPendingInviteCode("");
-        setInvitePreviewLoaded(false);
-        setError(nextError.message);
-      })
-      .finally(() => setInviteBusy(false));
-  }, [inviteBusy, invitePreview, invitePreviewLoaded, pendingInviteCode, session, token]);
 
   if (!token || !session) {
     return (
@@ -233,15 +170,13 @@ export function App() {
                 groceries.
               </p>
               <div className="feature-pills">
-                <span className="feature-pill">Live household sync</span>
-                <span className="feature-pill">Multiple lists</span>
+                <span className="feature-pill">Live list sync</span>
+                <span className="feature-pill">Default sharing</span>
                 <span className="feature-pill">History for repeats</span>
               </div>
             </div>
             <div className="auth-panel">
               <AuthScreen
-                initialEmail={invitePreview?.email ?? ""}
-                inviteHouseholdName={invitePreview?.householdName ?? null}
                 onSignedIn={(nextToken, nextSession) => {
                   window.localStorage.setItem(STORAGE_KEY, nextToken);
                   setToken(nextToken);
@@ -278,21 +213,24 @@ export function App() {
 
         {route.name === "home" ? (
           <ListsHome
-            session={session}
             lists={lists}
             token={token}
             onOpenList={(listId) => navigate({ name: "list", listId })}
             onRefresh={() => setRefreshTick((tick) => tick + 1)}
-            onSessionChange={setSession}
           />
         ) : null}
 
         {route.name === "list" ? (
           <ListDetail
             state={listState}
+            userId={session.user.id}
             token={token}
             onBack={() => navigate({ name: "home" })}
             onRefresh={() => setRefreshTick((tick) => tick + 1)}
+            onDeleted={() => {
+              navigate({ name: "home" });
+              setRefreshTick((tick) => tick + 1);
+            }}
           />
         ) : null}
 
@@ -303,11 +241,7 @@ export function App() {
             theme={theme}
             onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
             onBack={() => navigate({ name: "home" })}
-            onSessionChange={(nextSession) => {
-              setSession(nextSession);
-              setRefreshTick((tick) => tick + 1);
-            }}
-            onRefresh={() => setRefreshTick((tick) => tick + 1)}
+            onSessionChange={setSession}
           />
         ) : null}
       </section>
@@ -350,30 +284,17 @@ function ThemeSwitch(props: { theme: Theme; onToggle: () => void }) {
   );
 }
 
-function AuthScreen(props: {
-  initialEmail: string;
-  inviteHouseholdName: string | null;
-  onSignedIn: (token: string, session: SessionPayload) => void;
-}) {
+function AuthScreen(props: { onSignedIn: (token: string, session: SessionPayload) => void }) {
   const [step, setStep] = useState<AuthStep>("request");
-  const [email, setEmail] = useState(props.initialEmail);
+  const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [code, setCode] = useState("");
   const [devCode, setDevCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (props.initialEmail) {
-      setEmail(props.initialEmail);
-    }
-  }, [props.initialEmail]);
-
   return (
     <div className="stack">
-      {props.inviteHouseholdName ? (
-        <p className="success">Sign in as {props.initialEmail} to join {props.inviteHouseholdName}.</p>
-      ) : null}
       {step === "request" ? (
         <>
           <label className="field">
@@ -448,47 +369,22 @@ function AuthScreen(props: {
 }
 
 function ListsHome(props: {
-  session: SessionPayload;
   lists: ShoppingListSummary[];
   token: string;
   onOpenList: (listId: number) => void;
   onRefresh: () => void;
-  onSessionChange: (session: SessionPayload) => void;
 }) {
   const [listName, setListName] = useState("");
-  const [householdName, setHouseholdName] = useState("");
-  const [householdId, setHouseholdId] = useState(() => props.session.households[0]?.id ?? 0);
-  const selectedHousehold = props.session.households.find((household) => household.id === householdId) ?? null;
-  const visibleLists = props.lists.filter((list) => list.householdId === householdId);
-  const totalActive = visibleLists.reduce((sum, list) => sum + list.activeCount, 0);
-  const totalCompleted = visibleLists.reduce((sum, list) => sum + list.completedCount, 0);
-
-  useEffect(() => {
-    if (!props.session.households.some((household) => household.id === householdId)) {
-      setHouseholdId(props.session.households[0]?.id ?? 0);
-    }
-  }, [householdId, props.session.households]);
+  const totalActive = props.lists.reduce((sum, list) => sum + list.activeCount, 0);
+  const totalCompleted = props.lists.reduce((sum, list) => sum + list.completedCount, 0);
 
   return (
     <div className="stack">
       <section className="hero compact-hero">
         <div className="hero-copy">
           <p className="eyebrow">Lists</p>
-          <h1>{selectedHousehold?.name ?? "Your household"}</h1>
+          <h1>Your lists</h1>
           <p className="lede">Pick the list you are shopping from now.</p>
-          {props.session.households.length > 1 ? (
-            <select
-              value={householdId}
-              onChange={(event) => setHouseholdId(Number(event.target.value))}
-              aria-label="Household"
-            >
-              {props.session.households.map((household) => (
-                <option key={household.id} value={household.id}>
-                  {household.name}
-                </option>
-              ))}
-            </select>
-          ) : null}
         </div>
         <div className="hero-metrics">
           <div className="metric-card">
@@ -502,76 +398,42 @@ function ListsHome(props: {
         </div>
       </section>
 
-      {props.session.households.length === 0 ? (
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <span className="section-label">Start</span>
-              <h2>Create your household</h2>
-            </div>
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <span className="section-label">Create</span>
+            <h2>New list</h2>
           </div>
-          <div className="toolbar-grid">
-            <input
-              value={householdName}
-              onChange={(event) => setHouseholdName(event.target.value)}
-              placeholder="Our home"
-              aria-label="New household"
-            />
-            <button
-              onClick={async () => {
-                if (!householdName.trim()) return;
-                const nextSession = await api<SessionPayload>("/api/households", {
-                  method: "POST",
-                  body: JSON.stringify({ name: householdName }),
-                }, props.token);
-                setHouseholdName("");
-                props.onSessionChange(nextSession);
-                props.onRefresh();
-              }}
-            >
-              Create household
-            </button>
-          </div>
-        </section>
-      ) : null}
-
-      {props.session.households.length > 0 ? (
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <span className="section-label">Create</span>
-              <h2>New list</h2>
-            </div>
-          </div>
-          <div className="composer-grid">
-            <input value={listName} onChange={(event) => setListName(event.target.value)} placeholder="Groceries" />
-            <button
-              onClick={async () => {
-                if (!listName.trim() || !householdId) return;
-                await api(`/api/households/${householdId}/lists`, {
-                  method: "POST",
-                  body: JSON.stringify({ name: listName }),
-                }, props.token);
-                setListName("");
-                props.onRefresh();
-              }}
-            >
-              Create list
-            </button>
-          </div>
-        </section>
-      ) : null}
+        </div>
+        <div className="composer-grid">
+          <input value={listName} onChange={(event) => setListName(event.target.value)} placeholder="Groceries" />
+          <button
+            onClick={async () => {
+              if (!listName.trim()) return;
+              await api("/api/lists", {
+                method: "POST",
+                body: JSON.stringify({ name: listName }),
+              }, props.token);
+              setListName("");
+              props.onRefresh();
+            }}
+          >
+            Create list
+          </button>
+        </div>
+      </section>
 
       <section className="list-grid" aria-label="Shopping lists">
-        {visibleLists.length === 0 ? (
+        {props.lists.length === 0 ? (
           <div className="panel empty-panel">
             <p className="empty-state">Create your first list to start shopping.</p>
           </div>
         ) : (
-          visibleLists.map((list) => (
+          props.lists.map((list) => (
             <button key={list.id} className="list-card" onClick={() => props.onOpenList(list.id)}>
               <span className="list-card-main">
                 <strong>{list.name}</strong>
+                {list.shared ? <span>Shared by {list.ownerName}</span> : null}
               </span>
               <span className="list-card-counts">
                 <span>{list.activeCount} active</span>
@@ -587,9 +449,11 @@ function ListsHome(props: {
 
 function ListDetail(props: {
   state: ShoppingListState | null;
+  userId: number;
   token: string;
   onBack: () => void;
   onRefresh: () => void;
+  onDeleted: () => void;
 }) {
   const [itemName, setItemName] = useState("");
   const [suggestions, setSuggestions] = useState<ItemSuggestion[]>([]);
@@ -647,10 +511,23 @@ function ListDetail(props: {
           Back
         </button>
         <div>
-          <span className="section-label">{props.state.list.householdName}</span>
+          <span className="section-label">{props.state.list.ownerName}</span>
           <h1>{props.state.list.name}</h1>
         </div>
-        <span className="panel-badge">{props.state.activeItems.length} active</span>
+        <div className="detail-actions">
+          <span className="panel-badge">{props.state.activeItems.length} active</span>
+          {props.state.list.ownerId === props.userId ? (
+            <button
+              className="danger-button"
+              onClick={async () => {
+                await api(`/api/lists/${props.state!.list.id}`, { method: "DELETE" }, props.token);
+                props.onDeleted();
+              }}
+            >
+              Delete list
+            </button>
+          ) : null}
+        </div>
       </section>
 
       <section className="add-panel">
@@ -668,10 +545,7 @@ function ListDetail(props: {
             aria-label="Add item"
             autoComplete="off"
           />
-          <button
-            type="submit"
-            disabled={adding || !itemName.trim()}
-          >
+          <button type="submit" disabled={adding || !itemName.trim()}>
             Add item
           </button>
         </form>
@@ -737,37 +611,32 @@ function SettingsView(props: {
   onToggleTheme: () => void;
   onBack: () => void;
   onSessionChange: (session: SessionPayload) => void;
-  onRefresh: () => void;
 }) {
-  const [householdName, setHouseholdName] = useState("");
-  const [selectedHouseholdId, setSelectedHouseholdId] = useState(() => props.session.households[0]?.id ?? 0);
-  const [householdState, setHouseholdState] = useState<HouseholdState | null>(null);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
-  const [devInviteCode, setDevInviteCode] = useState<string | null>(null);
+  const [shareEmail, setShareEmail] = useState("");
+  const [shareEmails, setShareEmails] = useState(() => props.session.defaultShareEmails);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const selectedHousehold = props.session.households.find((household) => household.id === selectedHouseholdId) ?? null;
 
   useEffect(() => {
-    if (!props.session.households.some((household) => household.id === selectedHouseholdId)) {
-      setSelectedHouseholdId(props.session.households[0]?.id ?? 0);
-    }
-  }, [props.session.households, selectedHouseholdId]);
-
-  useEffect(() => {
-    if (!selectedHouseholdId) {
-      setHouseholdState(null);
-      return;
-    }
-
-    api<HouseholdState>(`/api/households/${selectedHouseholdId}`, undefined, props.token)
-      .then((nextState) => {
-        setHouseholdState(nextState);
+    api<ShareSettings>("/api/share-settings", undefined, props.token)
+      .then((settings) => {
+        setShareEmails(settings.emails);
         setError(null);
       })
       .catch((nextError) => setError(nextError.message));
-  }, [props.token, selectedHouseholdId, props.session]);
+  }, [props.token]);
+
+  const saveShares = async (emails: string[]) => {
+    const settings = await api<ShareSettings>(
+      "/api/share-settings",
+      { method: "PUT", body: JSON.stringify({ emails }) },
+      props.token,
+    );
+    setShareEmails(settings.emails);
+    props.onSessionChange({ ...props.session, defaultShareEmails: settings.emails });
+    setStatus("Sharing defaults saved.");
+    setError(null);
+  };
 
   return (
     <div className="stack">
@@ -795,175 +664,55 @@ function SettingsView(props: {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <span className="section-label">Households</span>
-            <h2>Spaces you belong to</h2>
+            <span className="section-label">Sharing</span>
+            <h2>Default list sharing</h2>
           </div>
-        </div>
-        <div className="household-list">
-          {props.session.households.map((household) => (
-            <button
-              key={household.id}
-              className={household.id === selectedHouseholdId ? "household-row selected" : "household-row"}
-              onClick={() => setSelectedHouseholdId(household.id)}
-            >
-              <span>{household.name}</span>
-              <span className="status-pill pending">{household.role}</span>
-            </button>
-          ))}
         </div>
         <div className="toolbar-grid settings-form">
           <input
-            value={householdName}
-            onChange={(event) => setHouseholdName(event.target.value)}
-            placeholder="New household"
+            value={shareEmail}
+            onChange={(event) => setShareEmail(event.target.value)}
+            placeholder="family@example.com"
+            aria-label="Default share email"
           />
           <button
             onClick={async () => {
-              if (!householdName.trim()) return;
-              const nextSession = await api<SessionPayload>("/api/households", {
-                method: "POST",
-                body: JSON.stringify({ name: householdName }),
-              }, props.token);
-              setHouseholdName("");
-              props.onSessionChange(nextSession);
-              setStatus("Household created.");
-            }}
-          >
-            Create household
-          </button>
-        </div>
-        {selectedHousehold ? (
-          <div className="danger-row">
-            <div>
-              <strong>Leave {selectedHousehold.name}</strong>
-              <p className="lede">You will lose access to its lists unless someone invites you again.</p>
-            </div>
-            <button
-              className="danger-button"
-              onClick={async () => {
-                try {
-                  const nextSession = await api<SessionPayload>(
-                    `/api/households/${selectedHousehold.id}/members/me`,
-                    { method: "DELETE" },
-                    props.token,
-                  );
-                  props.onSessionChange(nextSession);
-                  setStatus(`Left ${selectedHousehold.name}.`);
-                  setError(null);
-                } catch (nextError) {
-                  setError(nextError instanceof Error ? nextError.message : "Unable to leave household");
-                }
-              }}
-            >
-              Leave household
-            </button>
-          </div>
-        ) : null}
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <span className="section-label">Join</span>
-            <h2>Accept invite</h2>
-          </div>
-        </div>
-        <div className="toolbar-grid">
-          <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} placeholder="Invite code" />
-          <button
-            onClick={async () => {
-              if (!inviteCode.trim()) return;
+              if (!shareEmail.trim()) return;
               try {
-                const nextSession = await api<SessionPayload>("/api/invites/accept", {
-                  method: "POST",
-                  body: JSON.stringify({ code: inviteCode }),
-                }, props.token);
-                setInviteCode("");
-                props.onSessionChange(nextSession);
-                setStatus("Invite accepted.");
-                setError(null);
+                await saveShares([...shareEmails, shareEmail.trim()]);
+                setShareEmail("");
               } catch (nextError) {
-                setError(nextError instanceof Error ? nextError.message : "Unable to accept invite");
+                setError(nextError instanceof Error ? nextError.message : "Unable to save sharing defaults");
               }
             }}
           >
-            Join household
+            Add email
           </button>
         </div>
-      </section>
-
-      {selectedHouseholdId ? (
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <span className="section-label">Sharing</span>
-              <h2>Invites</h2>
-            </div>
-          </div>
-          <div className="toolbar-grid">
-            <input value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="family@example.com" />
-            <button
-              onClick={async () => {
-                if (!inviteEmail.trim()) return;
-                setStatus(null);
-                setError(null);
-                try {
-                  const email = inviteEmail.trim();
-                  const result = await api<{ ok: true; emailed: boolean; mailConfigured: boolean; devCode?: string }>(
-                    `/api/households/${selectedHouseholdId}/invites`,
-                    { method: "POST", body: JSON.stringify({ email }) },
-                    props.token,
-                  );
-                  setDevInviteCode(result.devCode ?? null);
-                  setStatus(result.emailed ? `Invite sent to ${email}.` : `Invite created for ${email}.`);
-                  setInviteEmail("");
-                  props.onRefresh();
-                  const nextState = await api<HouseholdState>(`/api/households/${selectedHouseholdId}`, undefined, props.token);
-                  setHouseholdState(nextState);
-                } catch (nextError) {
-                  setError(nextError instanceof Error ? nextError.message : "Unable to send invite");
-                }
-              }}
-            >
-              Send invite
-            </button>
-          </div>
-          {devInviteCode ? (
-            <p className="dev-hint" data-testid="dev-invite-code">
-              Dev invite code: {devInviteCode}
-            </p>
-          ) : null}
-          <ul className="invite-list">
-            {(householdState?.invites ?? []).map((invite) => (
-              <li key={invite.id} className="invite-row">
-                <span>{invite.email}</span>
-                <div className="invite-actions">
-                  <span className={invite.acceptedAt ? "status-pill accepted" : "status-pill pending"}>
-                    {invite.acceptedAt ? "Joined" : "Pending"}
-                  </span>
-                  {!invite.acceptedAt ? (
-                    <button
-                      className="text-button"
-                      onClick={async () => {
-                        try {
-                          await api(`/api/invites/${invite.id}`, { method: "DELETE" }, props.token);
-                          setStatus(`Invite removed for ${invite.email}.`);
-                          const nextState = await api<HouseholdState>(`/api/households/${selectedHouseholdId}`, undefined, props.token);
-                          setHouseholdState(nextState);
-                        } catch (nextError) {
-                          setError(nextError instanceof Error ? nextError.message : "Unable to remove invite");
-                        }
-                      }}
-                    >
-                      Remove
-                    </button>
-                  ) : null}
-                </div>
+        <ul className="share-list">
+          {shareEmails.length === 0 ? (
+            <li className="empty-state">New lists are private by default.</li>
+          ) : (
+            shareEmails.map((email) => (
+              <li key={email} className="share-row">
+                <span>{email}</span>
+                <button
+                  className="text-button"
+                  onClick={async () => {
+                    try {
+                      await saveShares(shareEmails.filter((nextEmail) => nextEmail !== email));
+                    } catch (nextError) {
+                      setError(nextError instanceof Error ? nextError.message : "Unable to remove email");
+                    }
+                  }}
+                >
+                  Remove
+                </button>
               </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+            ))
+          )}
+        </ul>
+      </section>
 
       {status ? <p className="success">{status}</p> : null}
       {error ? <p className="error">{error}</p> : null}

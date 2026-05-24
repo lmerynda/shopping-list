@@ -5,12 +5,6 @@ type LoginCodeEmailInput = {
   code: string;
 };
 
-type InviteEmailInput = {
-  email: string;
-  code: string;
-  householdName: string;
-};
-
 type EmailInput = {
   to: string;
   subject: string;
@@ -40,43 +34,6 @@ export async function sendLoginCodeEmail(input: LoginCodeEmailInput) {
       <p>Your Shopping List sign-in code is <strong>${escapeHtml(input.code)}</strong>.</p>
       <p>This code expires after your next sign-in request.</p>
       <p>If you did not request this code, you can ignore this email.</p>
-    `,
-  });
-
-  return true;
-}
-
-export async function sendInviteEmail(input: InviteEmailInput) {
-  if (!config.mail) {
-    return false;
-  }
-
-  const inviteUrl = `${config.clientOrigin}?invite=${encodeURIComponent(input.code)}`;
-  const sentAt = new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "America/Chicago",
-  }).format(new Date());
-  await sendEmail({
-    to: input.email,
-    subject: `Join ${input.householdName} on Shopping List`,
-    text: [
-      `Open this invite link: ${inviteUrl}`,
-      "",
-      `You were invited to join ${input.householdName} on Shopping List.`,
-      `Sent: ${sentAt}`,
-      "",
-      "If prompted, sign in with this email address to join automatically.",
-      "",
-      `Invite code: ${input.code}`,
-    ].join("\n"),
-    html: `
-      <p><a href="${escapeAttribute(inviteUrl)}">Open Shopping List</a></p>
-      <p>${escapeHtml(inviteUrl)}</p>
-      <p>You were invited to join <strong>${escapeHtml(input.householdName)}</strong> on Shopping List.</p>
-      <p>Sent: ${escapeHtml(sentAt)}</p>
-      <p>If prompted, sign in with this email address to join automatically.</p>
-      <p><strong>Invite code:</strong> ${escapeHtml(input.code)}</p>
     `,
   });
 
@@ -115,8 +72,4 @@ function escapeHtml(value: string) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
-}
-
-function escapeAttribute(value: string) {
-  return escapeHtml(value);
 }

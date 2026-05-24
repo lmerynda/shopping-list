@@ -1,11 +1,11 @@
 # Shopping list app
 
-Shared household shopping list app with:
+Shared shopping list app with:
 
-- one live list per household
+- live shared lists
 - hidden completed items with quick re-add
 - email-code sign-in
-- email-style household invites
+- default sharing for new lists
 - local black-box E2E coverage
 - Postgres-backed backend
 

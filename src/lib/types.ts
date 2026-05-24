@@ -4,16 +4,10 @@ export type User = {
   displayName: string;
 };
 
-export type Household = {
-  id: number;
-  name: string;
-  role: "owner" | "member";
-};
-
 export type ShoppingList = {
   id: number;
-  householdId: number;
-  householdName: string;
+  ownerId: number;
+  ownerName: string;
   name: string;
   createdAt: string;
 };
@@ -21,6 +15,7 @@ export type ShoppingList = {
 export type ShoppingListSummary = ShoppingList & {
   activeCount: number;
   completedCount: number;
+  shared: boolean;
 };
 
 export type Category = {
@@ -32,7 +27,6 @@ export type Category = {
 export type ShoppingItem = {
   id: number;
   listId: number;
-  householdId: number;
   name: string;
   normalizedName: string;
   categoryKey: string;
@@ -46,28 +40,16 @@ export type ShoppingItem = {
 export type ItemSuggestion = {
   name: string;
   normalizedName: string;
-  source: "catalog" | "user" | "household";
-};
-
-export type Invite = {
-  id: number;
-  email: string;
-  code: string;
-  createdAt: string;
-  acceptedAt: string | null;
+  source: "catalog" | "user" | "list";
 };
 
 export type SessionPayload = {
   user: User;
-  households: Household[];
+  defaultShareEmails: string[];
 };
 
-export type HouseholdState = {
-  household: Household;
-  categories: Category[];
-  activeItems: ShoppingItem[];
-  completedItems: ShoppingItem[];
-  invites: Invite[];
+export type ShareSettings = {
+  emails: string[];
 };
 
 export type ShoppingListState = {

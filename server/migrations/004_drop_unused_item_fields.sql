@@ -1,3 +1,0 @@
-ALTER TABLE items DROP COLUMN IF EXISTS note;
-
-DROP TABLE IF EXISTS category_rules;

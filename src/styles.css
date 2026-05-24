@@ -182,10 +182,11 @@ select:focus {
 .panel-header,
 .detail-header,
 .settings-row,
+.detail-actions,
 .item-row,
 .item-actions,
 .item-title-row,
-.invite-row {
+.share-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -321,7 +322,7 @@ select:focus {
 
 .feature-pills,
 .item-list,
-.invite-list {
+.share-list {
   display: grid;
   gap: 0.75rem;
 }
@@ -455,7 +456,7 @@ h3 {
 }
 
 .item-list,
-.invite-list {
+.share-list {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -468,7 +469,7 @@ h3 {
 }
 
 .list-card,
-.household-row,
+.share-row,
 .section-toggle {
   display: flex;
   align-items: center;
@@ -489,7 +490,7 @@ h3 {
 
 .list-card-main,
 .list-card-counts,
-.household-list,
+.share-list,
 .settings-grid {
   display: grid;
   gap: 0.35rem;
@@ -527,17 +528,12 @@ h3 {
   transform: none;
 }
 
-.household-list {
+.share-list {
   gap: 0.75rem;
 }
 
-.household-row {
+.share-row {
   padding: 0.85rem 1rem;
-}
-
-.household-row.selected {
-  border-color: var(--brand);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
 }
 
 .settings-form {
@@ -560,13 +556,13 @@ h3 {
 }
 
 .item-row,
-.invite-row {
+.share-row {
   padding: 0.6rem 0;
   border-top: 1px solid var(--border);
 }
 
 .item-row:first-child,
-.invite-row:first-child {
+.share-row:first-child {
   border-top: none;
 }
 
@@ -598,7 +594,8 @@ h3 {
   line-height: 1;
 }
 
-.invite-actions {
+.detail-actions,
+.share-actions {
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -666,10 +663,11 @@ h3 {
   .header-actions,
   .panel-header,
   .detail-header,
+  .detail-actions,
   .settings-row,
   .danger-row,
   .toolbar-row,
-  .invite-row {
+  .share-row {
     align-items: stretch;
     flex-direction: column;
   }

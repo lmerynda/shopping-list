@@ -4,11 +4,11 @@
   "description": "",
   "scripts": {
     "test": "npm run test:unit && npm run test:e2e",
-    "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
+    "dev": "npm run db:up && concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite",
     "migrate": "tsx server/run-migrations.ts",
-    "db:up": "docker compose up -d postgres",
+    "db:up": "docker compose up -d --wait postgres",
     "db:down": "docker compose down -v",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",

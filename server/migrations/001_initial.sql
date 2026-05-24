@@ -12,40 +12,30 @@ CREATE TABLE IF NOT EXISTS magic_codes (
   created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS households (
+CREATE TABLE IF NOT EXISTS shopping_lists (
   id SERIAL PRIMARY KEY,
+  owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS household_memberships (
+CREATE TABLE IF NOT EXISTS default_shares (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
-  role TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (user_id, household_id)
-);
-
-CREATE TABLE IF NOT EXISTS invites (
-  id SERIAL PRIMARY KEY,
-  household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
-  code TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL,
-  accepted_at TIMESTAMPTZ
+  PRIMARY KEY (user_id, email)
 );
 
-CREATE TABLE IF NOT EXISTS household_categories (
-  household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
-  category_key TEXT NOT NULL,
-  label TEXT NOT NULL,
-  sort_order INTEGER NOT NULL,
-  PRIMARY KEY (household_id, category_key)
+CREATE TABLE IF NOT EXISTS list_shares (
+  list_id INTEGER NOT NULL REFERENCES shopping_lists(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (list_id, email)
 );
 
 CREATE TABLE IF NOT EXISTS items (
   id SERIAL PRIMARY KEY,
-  household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+  list_id INTEGER NOT NULL REFERENCES shopping_lists(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   normalized_name TEXT NOT NULL,
   category_key TEXT NOT NULL,
@@ -53,4 +43,22 @@ CREATE TABLE IF NOT EXISTS items (
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   completed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS user_item_history (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  normalized_name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  use_count INTEGER NOT NULL DEFAULT 1,
+  last_used_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (user_id, normalized_name)
+);
+
+CREATE TABLE IF NOT EXISTS list_item_history (
+  list_id INTEGER NOT NULL REFERENCES shopping_lists(id) ON DELETE CASCADE,
+  normalized_name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  use_count INTEGER NOT NULL DEFAULT 1,
+  last_used_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (list_id, normalized_name)
 );
