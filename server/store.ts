@@ -8,7 +8,10 @@ import { runMigrations } from "./migrate.js";
 type Session = {
   token: string;
   userId: number;
+  expiresAt: number;
 };
+
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type Queryable = {
   query<Result = unknown>(text: string, values?: unknown[]): Promise<{ rows: Result[]; rowCount: number | null }>;
@@ -162,7 +165,7 @@ export class AppStore {
 
     const user = mapUser(userResult.rows[0]);
     const token = randomBytes(24).toString("hex");
-    this.sessions.set(token, { token, userId: user.id });
+    this.sessions.set(token, { token, userId: user.id, expiresAt: Date.now() + SESSION_TTL_MS });
 
     return {
       token,
@@ -174,7 +177,19 @@ export class AppStore {
     if (!token) {
       return null;
     }
-    return this.sessions.get(token)?.userId ?? null;
+
+    const session = this.sessions.get(token);
+    if (!session) {
+      return null;
+    }
+
+    if (session.expiresAt <= Date.now()) {
+      this.sessions.delete(token);
+      return null;
+    }
+
+    session.expiresAt = Date.now() + SESSION_TTL_MS;
+    return session.userId;
   }
 
   async getSessionPayload(userId: number): Promise<SessionPayload> {

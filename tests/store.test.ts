@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { newDb } from "pg-mem";
-import { AppStore } from "../server/store";
+import { AppStore, SESSION_TTL_MS } from "../server/store";
 
 describe("AppStore", () => {
   let store: AppStore;
@@ -28,6 +28,27 @@ describe("AppStore", () => {
 
     expect(next.households).toHaveLength(1);
     expect(next.households[0].name).toBe("Home");
+  });
+
+  test("extends valid sessions when they are used", async () => {
+    const code = await store.requestMagicCode("owner@example.com", "Owner");
+    const session = await store.verifyMagicCode("owner@example.com", code);
+    const token = session!.token;
+    const storedSession = store.sessions.get(token)!;
+    storedSession.expiresAt = Date.now() + 1000;
+
+    expect(store.getUserIdFromToken(token)).toBe(session!.session.user.id);
+    expect(store.sessions.get(token)!.expiresAt).toBeGreaterThan(Date.now() + SESSION_TTL_MS - 1000);
+  });
+
+  test("rejects and removes expired sessions", async () => {
+    const code = await store.requestMagicCode("owner@example.com", "Owner");
+    const session = await store.verifyMagicCode("owner@example.com", code);
+    const token = session!.token;
+    store.sessions.get(token)!.expiresAt = Date.now() - 1;
+
+    expect(store.getUserIdFromToken(token)).toBeNull();
+    expect(store.sessions.has(token)).toBe(false);
   });
 
   test("creates a default list and returns list summaries", async () => {
