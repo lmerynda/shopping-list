@@ -217,8 +217,6 @@ export function App() {
       .finally(() => setInviteBusy(false));
   }, [inviteBusy, invitePreview, invitePreviewLoaded, pendingInviteCode, session, token]);
 
-  const hasMultipleHouseholds = (session?.households.length ?? 0) > 1;
-
   if (!token || !session) {
     return (
       <main className="shell">
@@ -282,7 +280,6 @@ export function App() {
           <ListsHome
             session={session}
             lists={lists}
-            hasMultipleHouseholds={hasMultipleHouseholds}
             token={token}
             onOpenList={(listId) => navigate({ name: "list", listId })}
             onRefresh={() => setRefreshTick((tick) => tick + 1)}
@@ -453,7 +450,6 @@ function AuthScreen(props: {
 function ListsHome(props: {
   session: SessionPayload;
   lists: ShoppingListSummary[];
-  hasMultipleHouseholds: boolean;
   token: string;
   onOpenList: (listId: number) => void;
   onRefresh: () => void;
@@ -462,8 +458,10 @@ function ListsHome(props: {
   const [listName, setListName] = useState("");
   const [householdName, setHouseholdName] = useState("");
   const [householdId, setHouseholdId] = useState(() => props.session.households[0]?.id ?? 0);
-  const totalActive = props.lists.reduce((sum, list) => sum + list.activeCount, 0);
-  const totalCompleted = props.lists.reduce((sum, list) => sum + list.completedCount, 0);
+  const selectedHousehold = props.session.households.find((household) => household.id === householdId) ?? null;
+  const visibleLists = props.lists.filter((list) => list.householdId === householdId);
+  const totalActive = visibleLists.reduce((sum, list) => sum + list.activeCount, 0);
+  const totalCompleted = visibleLists.reduce((sum, list) => sum + list.completedCount, 0);
 
   useEffect(() => {
     if (!props.session.households.some((household) => household.id === householdId)) {
@@ -476,8 +474,21 @@ function ListsHome(props: {
       <section className="hero compact-hero">
         <div className="hero-copy">
           <p className="eyebrow">Lists</p>
-          <h1>Your lists</h1>
+          <h1>{selectedHousehold?.name ?? "Your household"}</h1>
           <p className="lede">Pick the list you are shopping from now.</p>
+          {props.session.households.length > 1 ? (
+            <select
+              value={householdId}
+              onChange={(event) => setHouseholdId(Number(event.target.value))}
+              aria-label="Household"
+            >
+              {props.session.households.map((household) => (
+                <option key={household.id} value={household.id}>
+                  {household.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
         </div>
         <div className="hero-metrics">
           <div className="metric-card">
@@ -525,52 +536,42 @@ function ListsHome(props: {
       ) : null}
 
       {props.session.households.length > 0 ? (
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <span className="section-label">Create</span>
-            <h2>New list</h2>
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <span className="section-label">Create</span>
+              <h2>New list</h2>
+            </div>
           </div>
-        </div>
-        <div className="composer-grid">
-          <input value={listName} onChange={(event) => setListName(event.target.value)} placeholder="Groceries" />
-          {props.session.households.length > 1 ? (
-            <select value={householdId} onChange={(event) => setHouseholdId(Number(event.target.value))}>
-              {props.session.households.map((household) => (
-                <option key={household.id} value={household.id}>
-                  {household.name}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          <button
-            onClick={async () => {
-              if (!listName.trim() || !householdId) return;
-              await api(`/api/households/${householdId}/lists`, {
-                method: "POST",
-                body: JSON.stringify({ name: listName }),
-              }, props.token);
-              setListName("");
-              props.onRefresh();
-            }}
-          >
-            Create list
-          </button>
-        </div>
-      </section>
+          <div className="composer-grid">
+            <input value={listName} onChange={(event) => setListName(event.target.value)} placeholder="Groceries" />
+            <button
+              onClick={async () => {
+                if (!listName.trim() || !householdId) return;
+                await api(`/api/households/${householdId}/lists`, {
+                  method: "POST",
+                  body: JSON.stringify({ name: listName }),
+                }, props.token);
+                setListName("");
+                props.onRefresh();
+              }}
+            >
+              Create list
+            </button>
+          </div>
+        </section>
       ) : null}
 
       <section className="list-grid" aria-label="Shopping lists">
-        {props.lists.length === 0 ? (
+        {visibleLists.length === 0 ? (
           <div className="panel empty-panel">
             <p className="empty-state">Create your first list to start shopping.</p>
           </div>
         ) : (
-          props.lists.map((list) => (
+          visibleLists.map((list) => (
             <button key={list.id} className="list-card" onClick={() => props.onOpenList(list.id)}>
               <span className="list-card-main">
                 <strong>{list.name}</strong>
-                {props.hasMultipleHouseholds ? <span>{list.householdName}</span> : null}
               </span>
               <span className="list-card-counts">
                 <span>{list.activeCount} active</span>
@@ -626,13 +627,13 @@ function ListDetail(props: {
     const nextName = name.trim();
     if (!nextName || adding) return;
     setAdding(true);
+    setItemName("");
+    setSuggestions([]);
     try {
       await api(`/api/lists/${props.state!.list.id}/items`, {
         method: "POST",
         body: JSON.stringify({ name: nextName }),
       }, props.token);
-      setItemName("");
-      setSuggestions([]);
       props.onRefresh();
     } finally {
       setAdding(false);

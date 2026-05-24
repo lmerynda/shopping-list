@@ -573,6 +573,7 @@ h3 {
 .item-row {
   min-height: 2.7rem;
   gap: 0.65rem;
+  padding: 0.4rem 0;
 }
 
 .item-name {
