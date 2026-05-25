@@ -191,23 +191,27 @@ export function App() {
     );
   }
 
+  const signOut = () => {
+    window.localStorage.removeItem(STORAGE_KEY);
+    setToken(null);
+    setSession(null);
+    setLists([]);
+    setListState(null);
+    navigate({ name: "home" });
+  };
+
   return (
-    <main className="shell">
-      <section className="card app-card">
-        <AppHeader
-          session={session}
-          theme={theme}
-          onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
-          onOpenSettings={() => navigate({ name: "settings" })}
-          onSignOut={() => {
-            window.localStorage.removeItem(STORAGE_KEY);
-            setToken(null);
-            setSession(null);
-            setLists([]);
-            setListState(null);
-            navigate({ name: "home" });
-          }}
-        />
+    <main className={route.name === "list" ? "shell list-shell" : "shell"}>
+      <section className={route.name === "list" ? "card app-card list-app-card" : "card app-card"}>
+        {route.name !== "list" ? (
+          <AppHeader
+            session={session}
+            theme={theme}
+            onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
+            onOpenSettings={() => navigate({ name: "settings" })}
+            onSignOut={signOut}
+          />
+        ) : null}
 
         {error ? <p className="error app-error">{error}</p> : null}
 
@@ -226,6 +230,7 @@ export function App() {
             userId={session.user.id}
             token={token}
             onBack={() => navigate({ name: "home" })}
+            onOpenSettings={() => navigate({ name: "settings" })}
             onRefresh={() => setRefreshTick((tick) => tick + 1)}
             onDeleted={() => {
               navigate({ name: "home" });
@@ -452,12 +457,12 @@ function ListDetail(props: {
   userId: number;
   token: string;
   onBack: () => void;
+  onOpenSettings: () => void;
   onRefresh: () => void;
   onDeleted: () => void;
 }) {
   const [itemName, setItemName] = useState("");
   const [suggestions, setSuggestions] = useState<ItemSuggestion[]>([]);
-  const [showCompleted, setShowCompleted] = useState(false);
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
@@ -481,7 +486,7 @@ function ListDetail(props: {
 
   if (!props.state) {
     return (
-      <section className="panel empty-panel">
+      <section className="list-loading">
         <p className="empty-state">Loading list...</p>
       </section>
     );
@@ -505,50 +510,67 @@ function ListDetail(props: {
   };
 
   return (
-    <div className="stack">
-      <section className="detail-header">
-        <button className="text-button" onClick={props.onBack}>
-          Back
+    <div className="list-screen">
+      <header className="list-topbar">
+        <button className="icon-button" onClick={props.onBack} aria-label="Back">
+          ←
         </button>
-        <div>
-          <span className="section-label">{props.state.list.ownerName}</span>
+        <div className="list-title-block">
           <h1>{props.state.list.name}</h1>
+          <span>{props.state.list.ownerName}</span>
         </div>
-        <div className="detail-actions">
-          <span className="panel-badge">{props.state.activeItems.length} active</span>
+        <div className="list-topbar-actions">
+          <span className="panel-badge">{props.state.activeItems.length}</span>
+          <button className="icon-button" onClick={props.onOpenSettings} aria-label="Settings">
+            ⚙
+          </button>
           {props.state.list.ownerId === props.userId ? (
             <button
-              className="danger-button"
+              className="icon-button danger-icon"
+              aria-label="Delete list"
               onClick={async () => {
                 await api(`/api/lists/${props.state!.list.id}`, { method: "DELETE" }, props.token);
                 props.onDeleted();
               }}
             >
-              Delete list
+              ×
             </button>
           ) : null}
         </div>
+      </header>
+
+      <section className="list-panel list-paper" aria-label="Shopping list">
+        <ItemList
+          items={props.state.activeItems}
+          actionLabel="Mark bought"
+          actionIcon="✓"
+          onAction={async (itemId) => {
+            await api(`/api/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) }, props.token);
+            props.onRefresh();
+          }}
+        />
+
+        {props.state.completedItems.length > 0 ? (
+          <div className="completed-group">
+            <div className="completed-divider">
+              <span>Checked</span>
+              <span>{props.state.completedItems.length}</span>
+            </div>
+            <ItemList
+              items={props.state.completedItems}
+              completed
+              actionLabel="Re-add"
+              actionIcon="+"
+              onAction={async (itemId) => {
+                await api(`/api/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ status: "active" }) }, props.token);
+                props.onRefresh();
+              }}
+            />
+          </div>
+        ) : null}
       </section>
 
-      <section className="add-panel">
-        <form
-          className="add-bar"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void addItem(itemName);
-          }}
-        >
-          <input
-            value={itemName}
-            onChange={(event) => setItemName(event.target.value)}
-            placeholder="Milk"
-            aria-label="Add item"
-            autoComplete="off"
-          />
-          <button type="submit" disabled={adding || !itemName.trim()}>
-            Add item
-          </button>
-        </form>
+      <section className="sticky-add">
         {suggestions.length > 0 ? (
           <div className="suggestion-strip" aria-label="Item suggestions">
             {suggestions.map((suggestion) => (
@@ -563,42 +585,24 @@ function ListDetail(props: {
             ))}
           </div>
         ) : null}
-      </section>
-
-      <section className="panel list-panel">
-        <div className="panel-header">
-          <div>
-            <span className="section-label">Today</span>
-            <h2>Active list</h2>
-          </div>
-        </div>
-        <ItemList
-          items={props.state.activeItems}
-          actionLabel="Mark bought"
-          actionIcon="✓"
-          onAction={async (itemId) => {
-            await api(`/api/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) }, props.token);
-            props.onRefresh();
+        <form
+          className="add-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void addItem(itemName);
           }}
-        />
-      </section>
-
-      <section className="panel">
-        <button className="section-toggle" onClick={() => setShowCompleted((current) => !current)}>
-          <span>Bought</span>
-          <span>{props.state.completedItems.length}</span>
-        </button>
-        {showCompleted ? (
-          <ItemList
-            items={props.state.completedItems}
-            actionLabel="Re-add"
-            actionIcon="+"
-            onAction={async (itemId) => {
-              await api(`/api/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ status: "active" }) }, props.token);
-              props.onRefresh();
-            }}
+        >
+          <input
+            value={itemName}
+            onChange={(event) => setItemName(event.target.value)}
+            placeholder="Add item"
+            aria-label="Add item"
+            autoComplete="off"
           />
-        ) : null}
+          <button type="submit" className="add-fab" disabled={adding || !itemName.trim()} aria-label="Add item">
+            +
+          </button>
+        </form>
       </section>
     </div>
   );
@@ -724,6 +728,7 @@ function ItemList(props: {
   items: ShoppingListState["activeItems"];
   actionLabel: string;
   actionIcon: string;
+  completed?: boolean;
   onAction: (itemId: number) => Promise<void>;
 }) {
   if (props.items.length === 0) {
@@ -733,7 +738,7 @@ function ItemList(props: {
   return (
     <ul className="item-list">
       {props.items.map((item) => (
-        <li className="item-row" key={item.id}>
+        <li className={props.completed ? "item-row completed" : "item-row"} key={item.id}>
           <span className="item-category-icon" aria-label={item.categoryLabel} title={item.categoryLabel}>
             {getCategoryIcon(item.categoryKey)}
           </span>

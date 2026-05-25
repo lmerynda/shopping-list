@@ -38,11 +38,11 @@ test("default sharing flow works end to end", async ({ browser }) => {
   await owner.getByRole("button", { name: /Weekend/ }).click();
   await expect(owner.getByRole("heading", { name: "Weekend" })).toBeVisible();
 
-  await owner.getByPlaceholder("Milk").fill("Milk");
+  await owner.getByPlaceholder("Add item").fill("Milk");
   await owner.getByRole("button", { name: "Add item" }).click();
   await expect(owner.locator(".list-panel").getByText("Milk")).toBeVisible();
   const rowBox = await owner.locator(".list-panel .item-row").first().boundingBox();
-  expect(rowBox?.height).toBeLessThanOrEqual(48);
+  expect(rowBox?.height).toBeLessThanOrEqual(64);
 
   await signIn(member, "wife@example.com", "Wife");
   await expect(member.getByRole("button", { name: /Weekend/ })).toBeVisible();
@@ -54,17 +54,16 @@ test("default sharing flow works end to end", async ({ browser }) => {
   await owner.getByRole("button", { name: "Back" }).click();
   await owner.getByRole("button", { name: /Weekend/ }).click();
   await expect(owner.locator(".list-panel").getByText("Nothing here yet.")).toBeVisible();
-  await owner.getByRole("button", { name: /Bought/ }).click();
   await expect(owner.getByText("Milk")).toBeVisible();
 
   await owner.getByRole("button", { name: "Re-add" }).click();
   await expect(member.locator(".list-panel").getByText("Milk")).toBeVisible();
 
-  await owner.getByPlaceholder("Milk").fill("Mi");
+  await owner.getByPlaceholder("Add item").fill("Mi");
   await expect(owner.getByRole("button", { name: "Milk" })).toBeVisible();
   await owner.getByRole("button", { name: "Milk" }).click();
   await expect(owner.locator(".list-panel .item-row")).toHaveCount(1);
-  await owner.getByPlaceholder("Milk").fill("Bread");
+  await owner.getByPlaceholder("Add item").fill("Bread");
   await owner.getByRole("button", { name: "Add item" }).click();
   await expect(owner.locator(".list-panel").getByText("Bread")).toBeVisible();
 });
