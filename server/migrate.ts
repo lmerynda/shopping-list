@@ -7,6 +7,20 @@ type Queryable = {
 };
 
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "migrations");
+const HOUSEHOLDS_TO_LISTS_MIGRATION = "003_migrate_households_to_lists.sql";
+
+async function hasCurrentListSchema(db: Queryable) {
+  try {
+    await db.query("SELECT shopping_lists.id FROM shopping_lists LIMIT 0");
+    await db.query("SELECT list_shares.list_id FROM list_shares LIMIT 0");
+    await db.query("SELECT items.list_id FROM items LIMIT 0");
+    await db.query("SELECT user_item_history.user_id FROM user_item_history LIMIT 0");
+    await db.query("SELECT list_item_history.list_id FROM list_item_history LIMIT 0");
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export async function runMigrations(db: Queryable) {
   await db.query(`
@@ -26,6 +40,11 @@ export async function runMigrations(db: Queryable) {
       [filename],
     );
     if (existing.rows.length > 0) {
+      continue;
+    }
+
+    if (filename === HOUSEHOLDS_TO_LISTS_MIGRATION && (await hasCurrentListSchema(db))) {
+      await db.query("INSERT INTO schema_migrations (version) VALUES ($1)", [filename]);
       continue;
     }
 
