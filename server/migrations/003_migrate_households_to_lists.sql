@@ -49,6 +49,18 @@ BEGIN
       WHERE legacy_household_id IS NULL;
     END IF;
 
+    -- Drop the old household_id column (which could be NOT NULL from prior schema versions).
+    -- Must do this after copying its value (above) but before INSERTs that don't provide it.
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'shopping_lists'
+        AND column_name = 'household_id'
+    ) THEN
+      ALTER TABLE shopping_lists DROP COLUMN household_id;
+    END IF;
+
     UPDATE shopping_lists
     SET owner_id = (
       SELECT household_memberships.user_id
@@ -124,6 +136,17 @@ BEGIN
         ON shopping_lists.legacy_household_id = households.id
       WHERE items.household_id = households.id
         AND items.list_id IS NULL;
+    END IF;
+
+    -- Drop old household_id column on items after we've used it for migration.
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'items'
+        AND column_name = 'household_id'
+    ) THEN
+      ALTER TABLE items DROP COLUMN household_id;
     END IF;
 
     IF EXISTS (SELECT 1 FROM items WHERE list_id IS NULL) THEN

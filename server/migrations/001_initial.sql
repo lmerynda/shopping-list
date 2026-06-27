@@ -55,3 +55,9 @@ CREATE TABLE IF NOT EXISTS list_item_history (
   last_used_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (list_id, normalized_name)
 );
+
+-- Clean up legacy columns from the pre-lists household schema (if present from older deploys).
+-- These may have been NOT NULL, causing INSERTs without the column to fail.
+-- The IF EXISTS form is safe and idempotent.
+ALTER TABLE shopping_lists DROP COLUMN IF EXISTS household_id;
+ALTER TABLE items DROP COLUMN IF EXISTS household_id;

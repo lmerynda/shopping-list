@@ -182,4 +182,43 @@ describe("AppStore", () => {
       await stalePool.end();
     }
   });
+
+  test("runMigrations creates all expected relations used by the app", async () => {
+    const db = newDb();
+    const adapter = db.adapters.createPg();
+    const PgMemPool = adapter.Pool;
+    const pool = new PgMemPool();
+
+    try {
+      const store = new AppStore({ db: pool as never });
+      await store.initialize();
+
+      // Probe all core relations (these would throw "relation does not exist" if missing)
+      await pool.query("SELECT 1 FROM users LIMIT 0");
+      await pool.query("SELECT 1 FROM magic_codes LIMIT 0");
+      await pool.query("SELECT 1 FROM shopping_lists LIMIT 0");
+      await pool.query("SELECT 1 FROM list_shares LIMIT 0");
+      await pool.query("SELECT 1 FROM items LIMIT 0");
+      await pool.query("SELECT 1 FROM user_item_history LIMIT 0");
+      await pool.query("SELECT 1 FROM list_item_history LIMIT 0");
+      await pool.query("SELECT 1 FROM default_shares LIMIT 0");
+      await pool.query("SELECT 1 FROM schema_migrations LIMIT 0");
+
+      // Also the column probes used by hasCurrentListSchema
+      await pool.query("SELECT shopping_lists.id, shopping_lists.owner_id FROM shopping_lists LIMIT 0");
+      await pool.query("SELECT list_shares.list_id FROM list_shares LIMIT 0");
+      await pool.query("SELECT items.list_id FROM items LIMIT 0");
+      await pool.query("SELECT user_item_history.user_id FROM user_item_history LIMIT 0");
+      await pool.query("SELECT list_item_history.list_id FROM list_item_history LIMIT 0");
+    } finally {
+      await pool.end();
+    }
+  });
+
+  // NOTE: Full end-to-end testing of 003_migrate_households_to_lists.sql (the legacy
+  // data migration) is difficult under pg-mem because it uses PL/pgSQL DO blocks,
+  // to_regclass, information_schema probes, LATERAL, etc. The e2e tests and deploys
+  // use real Postgres, but they start from fresh DBs and thus take the "skip 003"
+  // path. Additional coverage (e.g. spinning a disposable real Postgres with
+  // pre-populated households tables) would help catch relation/column errors in 003.
 });

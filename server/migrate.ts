@@ -35,16 +35,28 @@ export async function runMigrations(db: Queryable) {
     .sort();
 
   for (const filename of migrationFiles) {
+    const isHouseholdsMigration = filename === HOUSEHOLDS_TO_LISTS_MIGRATION;
+
+    if (isHouseholdsMigration && (await hasCurrentListSchema(db))) {
+      const existing = await db.query<{ version: string }>(
+        "SELECT version FROM schema_migrations WHERE version = $1",
+        [filename],
+      );
+      if (existing.rows.length === 0) {
+        await db.query("INSERT INTO schema_migrations (version) VALUES ($1)", [filename]);
+      }
+      continue;
+    }
+
     const existing = await db.query<{ version: string }>(
       "SELECT version FROM schema_migrations WHERE version = $1",
       [filename],
     );
-    if (existing.rows.length > 0) {
-      continue;
-    }
-
-    if (filename === HOUSEHOLDS_TO_LISTS_MIGRATION && (await hasCurrentListSchema(db))) {
-      await db.query("INSERT INTO schema_migrations (version) VALUES ($1)", [filename]);
+    // Foundational schema migrations (001, 002) are always applied (CREATE IF NOT EXISTS
+    // makes them cheap + defensive against incomplete history or dropped tables in prod).
+    // Data-only migrations like 003 are skipped when the current schema is detected.
+    const isFoundation = filename === "001_initial.sql" || filename === "002_create_default_shares.sql";
+    if (existing.rows.length > 0 && !isFoundation) {
       continue;
     }
 
@@ -52,7 +64,9 @@ export async function runMigrations(db: Queryable) {
     await db.query("BEGIN");
     try {
       await db.query(sql);
-      await db.query("INSERT INTO schema_migrations (version) VALUES ($1)", [filename]);
+      if (existing.rows.length === 0) {
+        await db.query("INSERT INTO schema_migrations (version) VALUES ($1)", [filename]);
+      }
       await db.query("COMMIT");
     } catch (error) {
       await db.query("ROLLBACK");
