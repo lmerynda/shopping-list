@@ -290,6 +290,9 @@ function ThemeSwitch(props: { theme: Theme; onToggle: () => void }) {
 }
 
 function AuthScreen(props: { onSignedIn: (token: string, session: SessionPayload) => void }) {
+  const isLocal = typeof window !== "undefined" &&
+    /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+
   const [step, setStep] = useState<AuthStep>("request");
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -300,7 +303,7 @@ function AuthScreen(props: { onSignedIn: (token: string, session: SessionPayload
 
   return (
     <div className="stack">
-      {step === "request" ? (
+      {isLocal ? (
         <>
           <label className="field">
             Display name
@@ -315,42 +318,9 @@ function AuthScreen(props: { onSignedIn: (token: string, session: SessionPayload
               setBusy(true);
               setError(null);
               try {
-                const result = await api<{ ok: true; devCode?: string }>("/api/auth/request-code", {
+                const result = await api<{ token: string; session: SessionPayload }>("/api/test/login", {
                   method: "POST",
                   body: JSON.stringify({ email, displayName }),
-                });
-                setDevCode(result.devCode ?? null);
-                setStep("verify");
-              } catch (nextError) {
-                setError(nextError instanceof Error ? nextError.message : "Unable to send code");
-              } finally {
-                setBusy(false);
-              }
-            }}
-            disabled={busy}
-          >
-            Send magic code
-          </button>
-        </>
-      ) : (
-        <>
-          <label className="field">
-            Verification code
-            <input value={code} onChange={(event) => setCode(event.target.value)} placeholder="ABC123" />
-          </label>
-          {devCode ? (
-            <p className="dev-hint" data-testid="dev-auth-code">
-              Dev code: {devCode}
-            </p>
-          ) : null}
-          <button
-            onClick={async () => {
-              setBusy(true);
-              setError(null);
-              try {
-                const result = await api<{ token: string; session: SessionPayload }>("/api/auth/verify", {
-                  method: "POST",
-                  body: JSON.stringify({ email, code }),
                 });
                 props.onSignedIn(result.token, result.session);
               } catch (nextError) {
@@ -363,9 +333,77 @@ function AuthScreen(props: { onSignedIn: (token: string, session: SessionPayload
           >
             Sign in
           </button>
-          <button className="text-button" onClick={() => setStep("request")}>
-            Start over
-          </button>
+        </>
+      ) : (
+        <>
+          {step === "request" ? (
+            <>
+              <label className="field">
+                Display name
+                <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Alex" />
+              </label>
+              <label className="field">
+                Email
+                <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="alex@example.com" />
+              </label>
+              <button
+                onClick={async () => {
+                  setBusy(true);
+                  setError(null);
+                  try {
+                    const result = await api<{ ok: true; devCode?: string }>("/api/auth/request-code", {
+                      method: "POST",
+                      body: JSON.stringify({ email, displayName }),
+                    });
+                    setDevCode(result.devCode ?? null);
+                    setStep("verify");
+                  } catch (nextError) {
+                    setError(nextError instanceof Error ? nextError.message : "Unable to send code");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                disabled={busy}
+              >
+                Send magic code
+              </button>
+            </>
+          ) : (
+            <>
+              <label className="field">
+                Verification code
+                <input value={code} onChange={(event) => setCode(event.target.value)} placeholder="ABC123" />
+              </label>
+              {devCode ? (
+                <p className="dev-hint" data-testid="dev-auth-code">
+                  Dev code: {devCode}
+                </p>
+              ) : null}
+              <button
+                onClick={async () => {
+                  setBusy(true);
+                  setError(null);
+                  try {
+                    const result = await api<{ token: string; session: SessionPayload }>("/api/auth/verify", {
+                      method: "POST",
+                      body: JSON.stringify({ email, code }),
+                    });
+                    props.onSignedIn(result.token, result.session);
+                  } catch (nextError) {
+                    setError(nextError instanceof Error ? nextError.message : "Unable to sign in");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                disabled={busy}
+              >
+                Sign in
+              </button>
+              <button className="text-button" onClick={() => setStep("request")}>
+                Start over
+              </button>
+            </>
+          )}
         </>
       )}
       {error ? <p className="error">{error}</p> : null}

@@ -1,14 +1,26 @@
 import { expect, test } from "@playwright/test";
 
 async function signIn(page: import("@playwright/test").Page, email: string, name: string) {
+  // Use direct dev login for localhost (no magic code flow) then inject session.
+  // Falls back to UI if needed.
+  const loginRes = await page.request.post("http://127.0.0.1:4000/api/test/login", {
+    data: { email, displayName: name },
+  });
+  if (loginRes.ok()) {
+    const { token } = await loginRes.json();
+    await page.goto("/");
+    await page.evaluate((t) => {
+      localStorage.setItem("shopping-list-session-token", t);
+    }, token);
+    // Reload so the app picks up the token from storage
+    await page.reload();
+    return;
+  }
+
+  // Fallback to the (now very simple) UI flow on localhost
   await page.goto("/");
   await page.getByLabel("Display name").fill(name);
   await page.getByLabel("Email").fill(email);
-  await page.getByRole("button", { name: "Send magic code" }).click();
-  const codeText = await page.getByTestId("dev-auth-code").textContent();
-  const code = codeText?.split(":").at(-1)?.trim();
-  if (!code) throw new Error("Expected dev auth code");
-  await page.getByLabel("Verification code").fill(code);
   await page.getByRole("button", { name: "Sign in" }).click();
 }
 

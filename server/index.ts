@@ -167,6 +167,20 @@ app.post("/api/auth/verify", async (req, res) => {
   res.json(session);
 });
 
+app.post("/api/test/login", async (req, res) => {
+  if (config.nodeEnv === "production") {
+    res.status(404).end();
+    return;
+  }
+  const parsed = requestCodeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const result = await store.devLogin(parsed.data.email, parsed.data.displayName);
+  res.json(result);
+});
+
 app.get("/api/session", requireUser, async (req, res) => {
   const userId = (req as express.Request & { userId: number }).userId;
   res.json(await store.getSessionPayload(userId));
@@ -274,16 +288,42 @@ app.patch("/api/items/:itemId", requireUser, async (req, res) => {
   }
 });
 
-const store = new AppStore({ connectionString: config.databaseUrl });
+let store: AppStore;
+let memCleanup: (() => Promise<void>) | null = null;
+
+async function createAppStore() {
+  if (process.env.USE_MEM_DB === "true") {
+    const { newDb } = await import("pg-mem");
+    const db = newDb();
+    const adapter = db.adapters.createPg();
+    const PgMemPool = adapter.Pool;
+    const memPool = new PgMemPool();
+    memCleanup = () => memPool.end();
+    return new AppStore({ db: memPool as any });
+  }
+  return new AppStore({ connectionString: config.databaseUrl });
+}
+
+const storePromise = createAppStore().then((s) => {
+  store = s;
+  return s;
+});
 
 async function start() {
+  await storePromise;
   await store.initialize();
   httpServer.listen(config.port, "0.0.0.0", () => {
     console.log(`server listening on ${config.port}`);
+    if (process.env.USE_MEM_DB === "true") {
+      console.log("using in-memory DB (USE_MEM_DB=true)");
+    }
   });
 }
 
-void start().catch((error) => {
+void start().catch(async (error) => {
   console.error(error);
+  if (memCleanup) {
+    try { await memCleanup(); } catch {}
+  }
   process.exit(1);
 });

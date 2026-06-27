@@ -32,9 +32,35 @@ CREATE TABLE IF NOT EXISTS list_item_history (
 
 DO $$
 BEGIN
+  ALTER TABLE shopping_lists ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+  ALTER TABLE shopping_lists ADD COLUMN IF NOT EXISTS legacy_household_id INTEGER;
+
   IF to_regclass('public.households') IS NOT NULL
      AND to_regclass('public.household_memberships') IS NOT NULL THEN
-    ALTER TABLE shopping_lists ADD COLUMN IF NOT EXISTS legacy_household_id INTEGER;
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'shopping_lists'
+        AND column_name = 'household_id'
+    ) THEN
+      UPDATE shopping_lists
+      SET legacy_household_id = household_id
+      WHERE legacy_household_id IS NULL;
+    END IF;
+
+    UPDATE shopping_lists
+    SET owner_id = (
+      SELECT household_memberships.user_id
+      FROM household_memberships
+      WHERE household_memberships.household_id = shopping_lists.legacy_household_id
+      ORDER BY CASE WHEN household_memberships.role = 'owner' THEN 0 ELSE 1 END,
+               household_memberships.created_at,
+               household_memberships.user_id
+      LIMIT 1
+    )
+    WHERE shopping_lists.owner_id IS NULL
+      AND shopping_lists.legacy_household_id IS NOT NULL;
 
     INSERT INTO shopping_lists (owner_id, name, created_at, legacy_household_id)
     SELECT owner.user_id, households.name, households.created_at, households.id
@@ -130,6 +156,16 @@ BEGIN
       updated_at TIMESTAMPTZ NOT NULL,
       completed_at TIMESTAMPTZ
     );
+  END IF;
+
+  IF to_regclass('public.shopping_lists') IS NOT NULL THEN
+    IF EXISTS (SELECT 1 FROM shopping_lists WHERE owner_id IS NULL) THEN
+      UPDATE shopping_lists
+      SET owner_id = (SELECT users.id FROM users ORDER BY users.id LIMIT 1)
+      WHERE owner_id IS NULL;
+    END IF;
+
+    ALTER TABLE shopping_lists ALTER COLUMN owner_id SET NOT NULL;
   END IF;
 END $$;
 

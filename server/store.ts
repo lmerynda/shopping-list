@@ -162,6 +162,43 @@ export class AppStore {
     };
   }
 
+  async devLogin(email: string, displayName?: string): Promise<{ token: string; session: SessionPayload }> {
+    const normalizedEmail = normalizeEmail(email);
+
+    let userResult = await this.db.query<UserRecord>(
+      "SELECT id, email, display_name AS displayName FROM users WHERE email = $1",
+      [normalizedEmail],
+    );
+
+    if (userResult.rows.length === 0) {
+      const name = (displayName?.trim() || normalizedEmail.split("@")[0]);
+      userResult = await this.db.query<UserRecord>(
+        "INSERT INTO users (email, display_name, created_at) VALUES ($1, $2, $3) RETURNING id, email, display_name AS displayName",
+        [normalizedEmail, name, now()],
+      );
+      await this.ensureDefaultList(userResult.rows[0].id);
+    } else if (displayName && displayName.trim()) {
+      // Optionally update display name if provided on subsequent dev logins
+      await this.db.query(
+        "UPDATE users SET display_name = $1 WHERE email = $2 AND display_name <> $1",
+        [displayName.trim(), normalizedEmail],
+      );
+      userResult = await this.db.query<UserRecord>(
+        "SELECT id, email, display_name AS displayName FROM users WHERE email = $1",
+        [normalizedEmail],
+      );
+    }
+
+    const user = mapUser(userResult.rows[0]);
+    const token = randomBytes(24).toString("hex");
+    this.sessions.set(token, { token, userId: user.id, expiresAt: Date.now() + SESSION_TTL_MS });
+
+    return {
+      token,
+      session: await this.getSessionPayload(user.id),
+    };
+  }
+
   getUserIdFromToken(token: string | undefined): number | null {
     if (!token) return null;
     const session = this.sessions.get(token);
