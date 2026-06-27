@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { readFile } from "node:fs/promises";
 import { newDb } from "pg-mem";
 import { AppStore, SESSION_TTL_MS } from "../server/store";
 
@@ -147,5 +148,38 @@ describe("AppStore", () => {
     const otherSession = await store.verifyMagicCode("other@example.com", otherCode);
 
     await expect(store.getItemSuggestions(otherSession!.session.user.id, groceries.id, "")).rejects.toThrow(/forbidden/i);
+  });
+
+  test("default_shares repair migration creates the missing table", async () => {
+    const db = newDb();
+    const adapter = db.adapters.createPg();
+    const PgMemPool = adapter.Pool;
+    const stalePool = new PgMemPool();
+
+    try {
+      await stalePool.query(`
+        CREATE TABLE users (
+          id SERIAL PRIMARY KEY,
+          email TEXT NOT NULL UNIQUE,
+          display_name TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL
+        )
+      `);
+
+      await stalePool.query(await readFile("server/migrations/002_create_default_shares.sql", "utf8"));
+
+      await stalePool.query(
+        "INSERT INTO users (email, display_name, created_at) VALUES ($1, $2, $3) RETURNING id",
+        ["owner@example.com", "Owner", new Date().toISOString()],
+      );
+      await expect(
+        stalePool.query("INSERT INTO default_shares (user_id, email, created_at) VALUES (1, $1, $2)", [
+          "wife@example.com",
+          new Date().toISOString(),
+        ]),
+      ).resolves.toBeDefined();
+    } finally {
+      await stalePool.end();
+    }
   });
 });

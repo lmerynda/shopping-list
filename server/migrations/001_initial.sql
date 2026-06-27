@@ -19,13 +19,6 @@ CREATE TABLE IF NOT EXISTS shopping_lists (
   created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS default_shares (
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  email TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (user_id, email)
-);
-
 CREATE TABLE IF NOT EXISTS list_shares (
   list_id INTEGER NOT NULL REFERENCES shopping_lists(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
