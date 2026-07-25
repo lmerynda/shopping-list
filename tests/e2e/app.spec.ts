@@ -38,12 +38,14 @@ test("default sharing flow works end to end", async ({ browser }) => {
   await owner.setViewportSize({ width: 390, height: 844 });
   await expect(owner.getByRole("heading", { name: "Groceries" })).toBeVisible();
 
-  await owner.getByRole("button", { name: "Settings" }).click();
+  await owner.getByRole("button", { name: "More options" }).click();
+  await owner.getByRole("menuitem", { name: "Settings" }).click();
   await owner.getByLabel("Default share email").fill("wife@example.com");
   await owner.getByRole("button", { name: "Add email" }).click();
   await expect(owner.getByText("wife@example.com")).toBeVisible();
   await owner.getByRole("button", { name: "Back" }).click();
 
+  await owner.getByRole("button", { name: "New list" }).click();
   await owner.getByPlaceholder("Groceries").fill("Weekend");
   await owner.getByRole("button", { name: "Create list" }).click();
   await expect(owner.getByRole("button", { name: /Weekend/ })).toBeVisible();
@@ -66,6 +68,7 @@ test("default sharing flow works end to end", async ({ browser }) => {
   await owner.getByRole("button", { name: "Back" }).click();
   await owner.getByRole("button", { name: /Weekend/ }).click();
   await expect(owner.locator(".list-panel").getByText("Nothing here yet.")).toBeVisible();
+  await owner.getByRole("button", { name: /Checked/ }).click();
   await expect(owner.getByText("Milk")).toBeVisible();
 
   await owner.getByRole("button", { name: "Re-add" }).click();
@@ -78,4 +81,38 @@ test("default sharing flow works end to end", async ({ browser }) => {
   await owner.getByPlaceholder("Add item").fill("Bread");
   await owner.getByRole("button", { name: "Add item" }).click();
   await expect(owner.locator(".list-panel").getByText("Bread")).toBeVisible();
+});
+
+test("list deletion requires confirmation", async ({ page }) => {
+  await signIn(page, "owner@example.com", "Owner");
+  await expect(page.getByRole("heading", { name: "Groceries" })).toBeVisible();
+
+  await page.getByRole("button", { name: "More options" }).click();
+  await page.getByRole("menuitem", { name: "Delete list" }).click();
+  await expect(page.getByRole("dialog", { name: /Delete “Groceries”/ })).toBeVisible();
+
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("heading", { name: "Groceries" })).toBeVisible();
+
+  await page.getByRole("button", { name: "More options" }).click();
+  await page.getByRole("menuitem", { name: "Delete list" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(page.getByText("No lists yet")).toBeVisible();
+});
+
+test("mobile screens fit the viewport and controls are touch friendly", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 });
+  await signIn(page, "mobile@example.com", "Mobile");
+  await expect(page.getByRole("heading", { name: "Groceries" })).toBeVisible();
+
+  const layout = await page.evaluate(() => ({
+    viewportWidth: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+  }));
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+
+  const addButton = page.getByRole("button", { name: "Add item" });
+  const box = await addButton.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(42);
+  expect(box?.height).toBeGreaterThanOrEqual(42);
 });

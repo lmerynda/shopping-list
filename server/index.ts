@@ -19,11 +19,28 @@ const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
 app.use(express.json());
 
+function isLocalDevelopmentOrigin(origin: string | undefined) {
+  if (!origin || config.nodeEnv === "production") {
+    return false;
+  }
+
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
+}
+
 app.use((req, res, next) => {
   const requestOrigin = req.header("origin");
   const isAllowedOrigin =
     !requestOrigin ||
     requestOrigin === config.clientOrigin ||
+    isLocalDevelopmentOrigin(requestOrigin) ||
     (config.clientOriginRegex ? config.clientOriginRegex.test(requestOrigin) : false);
 
   if (isAllowedOrigin && requestOrigin) {
