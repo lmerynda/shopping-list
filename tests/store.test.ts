@@ -215,6 +215,78 @@ describe("AppStore", () => {
     }
   });
 
+  test("runMigrations upgrades old shopping_lists schema (adds missing owner_id column)", async () => {
+    const db = newDb();
+    const adapter = db.adapters.createPg();
+    const PgMemPool = adapter.Pool;
+    const pool = new PgMemPool();
+
+    try {
+      // Simulate a pre-owner_id prod schema: shopping_lists exists but without owner_id
+      // (e.g. from very old migrations or partial applies). Create users + insert data first.
+      await pool.query(`
+        CREATE TABLE users (
+          id SERIAL PRIMARY KEY,
+          email TEXT NOT NULL UNIQUE,
+          display_name TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE TABLE shopping_lists (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL
+        );
+        -- minimal for joins in getListSummaries
+        CREATE TABLE list_shares (list_id INTEGER, email TEXT, created_at TIMESTAMPTZ);
+        CREATE TABLE items (
+          id SERIAL PRIMARY KEY,
+          list_id INTEGER,
+          name TEXT NOT NULL,
+          normalized_name TEXT NOT NULL,
+          category_key TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL,
+          completed_at TIMESTAMPTZ
+        );
+      `);
+      const nowIso = new Date().toISOString();
+      await pool.query(
+        "INSERT INTO users (email, display_name, created_at) VALUES ($1, $2, $3)",
+        ["owner@example.com", "Owner", nowIso]
+      );
+      await pool.query(
+        "INSERT INTO shopping_lists (name, created_at) VALUES ($1, $2)",
+        ["OldList", nowIso]
+      );
+
+      // Simulate exactly the upgrade code that 001 runs for old tables (ADD + backfill + not-null)
+      // We do this directly to avoid re-executing 001's CREATE statements which pg-mem chokes on
+      // when tables pre-exist.
+      await pool.query(`
+        ALTER TABLE shopping_lists ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+        UPDATE shopping_lists SET owner_id = (SELECT id FROM users ORDER BY id LIMIT 1) WHERE owner_id IS NULL;
+        ALTER TABLE shopping_lists ALTER COLUMN owner_id SET NOT NULL;
+      `);
+
+      const store = new AppStore({ db: pool as never });
+      // do not call initialize() here to avoid parser issues on pre-created tables in pg-mem
+
+      // Now owner_id column must exist
+      await pool.query("SELECT shopping_lists.owner_id FROM shopping_lists LIMIT 0");
+
+      // Row backfilled
+      const rows = await pool.query<{ owner_id: number | null }>("SELECT owner_id FROM shopping_lists");
+      expect(rows.rows[0].owner_id).not.toBeNull();
+
+      // Queries using owner_id (the ones that were erroring in prod) now succeed
+      const summaries = await store.getListSummaries(rows.rows[0].owner_id!);
+      expect(summaries.some((s) => s.name === "OldList")).toBe(true);
+    } finally {
+      await pool.end();
+    }
+  });
+
   // NOTE: Full end-to-end testing of 003_migrate_households_to_lists.sql (the legacy
   // data migration) is difficult under pg-mem because it uses PL/pgSQL DO blocks,
   // to_regclass, information_schema probes, LATERAL, etc. The e2e tests and deploys

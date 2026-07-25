@@ -11,7 +11,7 @@ const HOUSEHOLDS_TO_LISTS_MIGRATION = "003_migrate_households_to_lists.sql";
 
 async function hasCurrentListSchema(db: Queryable) {
   try {
-    await db.query("SELECT shopping_lists.id FROM shopping_lists LIMIT 0");
+    await db.query("SELECT shopping_lists.id, shopping_lists.owner_id FROM shopping_lists LIMIT 0");
     await db.query("SELECT list_shares.list_id FROM list_shares LIMIT 0");
     await db.query("SELECT items.list_id FROM items LIMIT 0");
     await db.query("SELECT user_item_history.user_id FROM user_item_history LIMIT 0");
